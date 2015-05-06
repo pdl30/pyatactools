@@ -86,7 +86,7 @@ def get_nfree(sam, nfree_dir, return_dict):
 	with open(sam) as f:
 		for line in f:
 			if line.startswith("@"):
-				output.write(line),
+				pass
 			else:
 				word = line.rstrip().split("\t")
 				if len(word) < 9: #Presumes it removes unaligned reads
@@ -151,9 +151,11 @@ def get_npres(sam, npres_dir, return_dict):
 
 def convert_bed_bw(bed, chrom):
 	name = re.sub(".bed", "", bed)
-	inbed = pybedtools.BedTool(bed)
-	outcov = inbed.genome_coverage(bg=True, genome=chrom)
-	outcov.saveas(name+".bedGraph")
+	#inbed = pybedtools.BedTool(bed)
+	#outcov = inbed.genome_coverage(bg=True, genome=chrom)
+	command = "bedtools genomecov -i {} -bg -g {} > {}.bedGraph".format(bed, chrom, name)
+	#outcov.saveas(name+".bedGraph")
+	subprocess.call(command, shell=True)
 	command = ["bedGraphToBigWig", name+".bedGraph", chrom, name+".bw"]
 	subprocess.call(command)
 	os.remove(name+".bedGraph")
@@ -212,8 +214,8 @@ def main():
 		pool = Pool(int(args["threads"]))
 		manager = Manager()
 		return_dict = manager.dict()
-		pool.map(function1, itertools.izip(list(conditions.keys()), itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
-		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+	#	pool.map(function1, itertools.izip(list(conditions.keys()), itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
+	#	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
 #		convert_bed_bw(transdense_list, args["genome"], chrom)
 		return_dict = manager.dict()
 		pool.map(function2, itertools.izip(list(conditions.keys()), itertools.repeat(nfree_dir), itertools.repeat(return_dict)))
