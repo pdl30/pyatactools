@@ -32,18 +32,25 @@ def ConfigSectionMap(section, Config):
 			dict1[option] = None
 	return dict1
 
-def ddup(conditions):
+def ddup(conditions, sam=True):
 	path = os.getcwd()
-	ddup_bam = []
+	ddup_sam = []
 	#Convert sam to bam, rmdup bam, convert bam to sam and remove intermediates, could really do with a pipe!
-	for sam in conditions:
-		name = re.sub(".sam$", "", sam)
-		command = "samtools view -bS {0}.sam | samtools sort - {0}_sort".format(name)
-		subprocess.call(command, shell=True)
-		command = "samtools rmdup {0}_sort.bam - | samtools view -h - > {0}_ddup.sam".format(name)
-		subprocess.call(command, shell=True)
-		os.remove("{0}_sort.bam".format(name))
-		ddup_sam.append("{}_ddup.sam".format(name)) #Might find pipe useful here???
+	if sam:
+		for sam in conditions:
+			name = re.sub(".sam$", "", sam)
+			command = "samtools view -bS {0}.sam | samtools sort - {0}_sort".format(name)
+			subprocess.call(command, shell=True)
+			command = "samtools rmdup {0}_sort.bam - | samtools view -h - > {0}_ddup.sam".format(name)
+			subprocess.call(command, shell=True)
+			os.remove("{0}_sort.bam".format(name))
+			ddup_sam.append("{}_ddup.sam".format(name)) #Might find pipe useful here???
+	else:
+		for bam in conditions:
+			name = re.sub(".bam$", "", bam)
+			command = "samtools rmdup {0}.bam - | samtools view -h - > {0}_ddup.sam".format(name)
+			subprocess.call(command, shell=True)
+			ddup_sam.append("{}_ddup.sam".format(name)) #Might find pipe useful here???
 	return ddup_sam
 
 def transdense(sam, transdense_dir, return_dict):
@@ -174,11 +181,12 @@ def function4(args):
 
 def main():
 	parser = argparse.ArgumentParser(description='Takes bam files and preprocess\'s for analysis\n')
-	parser.add_argument('-c', '--config', help='Conditions containing Sam files, values are naming', required=True)
+	parser.add_argument('-c', '--config', help='Conditions containing Sam/Bam files, values are naming', required=True)
 	parser.add_argument('-g', '--genome', help='Genome the samples are aligned to, options include	 mm10/mm9/hg19', required=True)
 	parser.add_argument('-o', '--outdir', help='Output directory, will create transdense, nfree and npres directories', required=True)
 	parser.add_argument('-t', '--threads', help='threads, default=1', default=1, required=False)
-	parser.add_argument('-d', action='store_true', help='De-duplicate sam files', required=False) 
+	parser.add_argument('-b', action='store_true', help='Use if Config contains bam files', required=False) 
+	parser.add_argument('-d', action='store_true', help='De-duplicate sam/bam files', required=False) 
 	if len(sys.argv)==1:
 		parser.print_help()
 		sys.exit(1)
@@ -201,30 +209,23 @@ def main():
 		os.makedirs(nfree_dir)
 		os.makedirs(npres_dir)
 	if args["d"]:
-		ddup_bams = ddup(conditions)
-		transdense_list = transdense(ddup_bams, transdense_dir)
-		convert_bed_bw(args["genome"], chrom, transdense_list)
-
-		nfree_list = get_nfree(ddup_bams, nfree_dir)
-		convert_bed_bw(args["genome"], chrom, nfree_list)
-
-		npres_list = get_npres(ddup_bams, npres_dir)
-		convert_bed_bw(args["genome"], chrom, npres_list)
+		if args["b"]:
+			ddup_bams = ddup(conditions, False)
+		else:
+			ddup_bams = ddup(conditions, True)
 	else:
-		pool = Pool(int(args["threads"]))
-		manager = Manager()
-		return_dict = manager.dict()
-	#	pool.map(function1, itertools.izip(list(conditions.keys()), itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
-	#	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-#		convert_bed_bw(transdense_list, args["genome"], chrom)
-		return_dict = manager.dict()
-		pool.map(function2, itertools.izip(list(conditions.keys()), itertools.repeat(nfree_dir), itertools.repeat(return_dict)))
-		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-		#et_nfree(conditions, nfree_dir)
-		#convert_bed_bw(args["genome"], chrom, nfree_list)
-		return_dict = manager.dict()
-		pool.map(function3, itertools.izip(list(conditions.keys()), itertools.repeat(npres_dir), itertools.repeat(return_dict)))
-		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-		#npres_list = get_npres(conditions, npres_dir)
-		#convert_bed_bw(args["genome"], chrom, npres_list)
+		ddup_bams = conditions
+
+	pool = Pool(int(args["threads"]))
+	manager = Manager()
+	return_dict = manager.dict()
+	pool.map(function1, itertools.izip(ddup_bams, itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
+	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+	return_dict = manager.dict()
+	pool.map(function2, itertools.izip(ddup_bams, itertools.repeat(nfree_dir), itertools.repeat(return_dict)))
+	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+	convert_bed_bw(args["genome"], chrom, nfree_list)
+	return_dict = manager.dict()
+	pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
+	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
 
