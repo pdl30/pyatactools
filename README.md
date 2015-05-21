@@ -1,5 +1,7 @@
 #pyatactools 
 
+#Please note this is still in alpha stage of development and probably won't work!
+
 ### Installation
 
 Clone this repository and then:
