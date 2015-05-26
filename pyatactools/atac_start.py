@@ -32,25 +32,25 @@ def ConfigSectionMap(section, Config):
 			dict1[option] = None
 	return dict1
 
-def ddup(conditions, sam=True):
-	path = os.getcwd()
-	ddup_sam = []
+def ddup(bam, sam=True):
 	#Convert sam to bam, rmdup bam, convert bam to sam and remove intermediates, could really do with a pipe!
 	if sam:
-		for sam in conditions:
-			name = re.sub(".sam$", "", sam)
-			command = "samtools view -bS {0}.sam | samtools sort - {0}_sort".format(name)
-			subprocess.call(command, shell=True)
-			command = "samtools rmdup {0}_sort.bam - | samtools view -h - > {0}_ddup.sam".format(name)
-			subprocess.call(command, shell=True)
-			os.remove("{0}_sort.bam".format(name))
-			ddup_sam.append("{}_ddup.sam".format(name)) #Might find pipe useful here???
+		name = re.sub(".sam$", "", sam)
+		command = "samtools view -bS {0}.sam | samtools sort - {0}_sort".format(name)
+		subprocess.call(command, shell=True)
+		command = "samtools rmdup {0}_sort.bam - | samtools view -h - > {0}_ddup.sam".format(name)
+		subprocess.call(command, shell=True)
+		os.remove("{0}_sort.bam".format(name))
 	else:
-		for bam in conditions:
-			name = re.sub(".bam$", "", bam)
-			command = "samtools rmdup {0}.bam - | samtools view -h - > {0}_ddup.sam".format(name)
-			subprocess.call(command, shell=True)
-			ddup_sam.append("{}_ddup.sam".format(name)) #Might find pipe useful here???
+		name = re.sub(".bam$", "", bam)
+		command = "samtools rmdup {0}.bam - | samtools view -h - > {0}_ddup.sam".format(name)
+		subprocess.call(command, shell=True)
+
+def ddup_rename(conditions):
+	ddup_sam = []
+	for cond in conditions:
+		name = re.sub(".sam$", "", sam)
+		ddup_sam.append("{}_ddup.sam".format(name))
 	return ddup_sam
 
 def transdense(sam, transdense_dir, return_dict):
@@ -124,7 +124,7 @@ def get_nfree(sam, nfree_dir, return_dict):
 	subprocess.call(command, shell=True)
 	os.remove(fh.name)
 
-def get_npres(sam, npres_dir, return_dict):
+def get_npres(sam, npres_dir, return_dict): 
 	fh = tempfile.NamedTemporaryFile(delete = False)
 	filename = os.path.basename(sam)
 	name = re.sub(".sam", "", filename)
@@ -179,6 +179,9 @@ def function3(args):
 def function4(args):
 	return convert_bed_bw(*args)
 
+def function0(args):
+	return ddup(*args)	
+
 def main():
 	parser = argparse.ArgumentParser(description='Takes bam files and preprocess\'s for analysis\n')
 	parser.add_argument('-c', '--config', help='Conditions containing Sam/Bam files, values are naming', required=True)
@@ -204,19 +207,22 @@ def main():
 	transdense_dir = os.path.join(args["outdir"], "transdense")
 	nfree_dir = os.path.join(args["outdir"], "nfree")
 	npres_dir = os.path.join(args["outdir"], "npres")
+	pool = Pool(int(args["threads"]))
+
 	if not os.path.isdir(transdense_dir):
 		os.makedirs(transdense_dir)
 		os.makedirs(nfree_dir)
 		os.makedirs(npres_dir)
 	if args["d"]:
 		if args["b"]:
-			ddup_bams = ddup(conditions, False)
+			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(False)))
+			ddup_bams = ddup_rename(conditions)
 		else:
-			ddup_bams = ddup(conditions, True)
+			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(True)))
+			ddup_bams = ddup_rename(conditions)
 	else:
-		ddup_bams = conditions
+		ddup_bams = list(conditions.keys())
 
-	pool = Pool(int(args["threads"]))
 	manager = Manager()
 	return_dict = manager.dict()
 	pool.map(function1, itertools.izip(ddup_bams, itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
