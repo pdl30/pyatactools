@@ -230,7 +230,6 @@ def main():
 	return_dict = manager.dict()
 	pool.map(function2, itertools.izip(ddup_bams, itertools.repeat(nfree_dir), itertools.repeat(return_dict)))
 	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-	convert_bed_bw(args["genome"], chrom, nfree_list)
 	return_dict = manager.dict()
 	pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
 	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
