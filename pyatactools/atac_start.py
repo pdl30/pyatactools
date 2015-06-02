@@ -49,7 +49,7 @@ def ddup(bam, sam=True):
 def ddup_rename(conditions):
 	ddup_sam = []
 	for cond in conditions:
-		name = re.sub(".sam$", "", sam)
+		name = re.sub(".sam$", "", cond)
 		ddup_sam.append("{}_ddup.sam".format(name))
 	return ddup_sam
 
