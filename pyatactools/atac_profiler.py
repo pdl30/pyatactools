@@ -29,29 +29,6 @@ def sam_size(bam):
 	results=  {}
 	size = reduce(lambda x, y: x + y, [ int(l.rstrip('\n').split('\t')[2]) for l in pysam.idxstats(bam) ])
 	return size
-
-def read_tss(ifile, positions, halfwinwidth, count, return_dict):
-	profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
-	constant = 1000000/float(sam_size(ifile))
-	bamfile = HTSeq.BAM_Reader(ifile)
-	for almnt in bamfile:	
-		if almnt.aligned:
-			s = set()
-			for step_iv, step_set in positions[ almnt.iv ].steps():
-				s |= step_set
-			for p in s:
-				if p.strand == "+":
-					start_in_window = almnt.iv.start - p.start + halfwinwidth 
-					end_in_window   = almnt.iv.end - p.start + halfwinwidth 
-				else:
-					start_in_window = p.start + halfwinwidth - almnt.iv.end
-					end_in_window   = p.start + halfwinwidth - almnt.iv.start
-				start_in_window = max( start_in_window, 0 )
-				end_in_window = min( end_in_window, 2*halfwinwidth )
-				profile[ start_in_window : end_in_window ] += constant
-	profile = profile/float(count) #Average over the number of TSS regions
-	return_dict[ifile] = profile
-
 def read_tss_pysam(bam, position_dict, halfwinwidth, count, return_dict):
 	profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
 	constant = 1000000/float(sam_size(bam))
@@ -196,13 +173,8 @@ def genebody_coverage(bam, position_list, return_dict):
 		tmp2[key] = aggreagated_cvg[key]
 	return_dict[bam] = tmp2
 
-def read_tss_anno(anno):
+def read_tss_anno(anno, gene_filter):
 	positions = {}
-
-def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, outname):
-	halfwinwidth = int(halfwinwidth)
-	tsspos = HTSeq.GenomicArrayOfSets( "auto", stranded=False )
-	c = 0
 	g_filter = []
 	if gene_filter:
 		with open(gene_filter) as f:
@@ -210,7 +182,6 @@ def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, outna
 				line = line.rstrip()
 				word = line.split("\t")
 				g_filter.append(word[0])
-	positions = {}
 	with open(anno) as f:
 		next(f)
 		for line in f:
@@ -230,37 +201,42 @@ def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, outna
 			if g_filter:
 				if word[0] in g_filter:
 					positions[word[0]] = (chrom, int(word[2]), strand)
-					p = HTSeq.GenomicInterval( chrom, int(word[2]), int(word[2]), strand )
-					window = HTSeq.GenomicInterval( chrom, start, int(word[2]) + halfwinwidth, "." )
-					tsspos[ window ] += p
 					c +=  1
 			else:
 				positions[word[0]] = (chrom, int(word[2]), strand)
-				p = HTSeq.GenomicInterval( chrom, int(word[2]), int(word[2]), strand )
-				window = HTSeq.GenomicInterval( chrom, start, int(word[2]) + halfwinwidth, "." )
-				tsspos[ window ] += p
 				c +=  1
+	return positions
 
+def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, outname):
+	halfwinwidth = int(halfwinwidth)
 	manager = Manager()
 	return_dict = manager.dict()
-#	read_tss_pysam(list(conditions)[0], positions, halfwinwidth, c, return_dict)
 	pool = Pool(threads)
-	pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth), 
-		itertools.repeat(c), itertools.repeat(return_dict)))
-	pool.close()
-	pool.join()	
-	for key in return_dict.keys():
-		pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label=conditions[key])  
+	if isinstance(gene_filter, dict):
+		for key1 in gene_filter:
+			positions = read_tss_anno(anno, gene_filter)
+			pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth), itertools.repeat(return_dict)))
+			pool.close()
+			pool.join()	
+			for key in return_dict.keys():
+				pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label="{}_{}".format(conditions[key], gene_filter[key1]))
+	else:
+		positions = read_tss_anno(anno, gene_filter)
+		pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth), itertools.repeat(return_dict)))
+		pool.close()
+		pool.join()	
+		for key in return_dict.keys():
+			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label=conditions[key])
 	pyplot.legend(prop={'size':8})
 	pyplot.savefig(outname+".pdf")
 
 def plot_genebody_profile(conditions, anno, gene_filter, threads, outname, filters):
+	manager = Manager()
+	return_dict = manager.dict()
+	pool = Pool(threads)
 	if isinstance(gene_filter, dict):
 		for key1 in gene_filter:
 			positions = genebody_percentile(anno, key1, mRNA_len_cut = 100)
-			manager = Manager()
-			return_dict = manager.dict()
-			pool = Pool(threads)
 			pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(return_dict)))
 			pool.close()
 			pool.join()	
@@ -268,9 +244,6 @@ def plot_genebody_profile(conditions, anno, gene_filter, threads, outname, filte
 				pyplot.plot( numpy.arange( 0, 100 ), return_dict[key], label="{}_{}".format(conditions[key], gene_filter[key1]))
 	else
 		positions = genebody_percentile(anno, gene_filter, mRNA_len_cut = 100)
-		manager = Manager()
-		return_dict = manager.dict()
-		pool = Pool(threads)
 		pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(return_dict)))
 		pool.close()
 		pool.join()	
