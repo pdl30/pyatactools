@@ -234,3 +234,4 @@ def main():
 	pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
 	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
 
+main()

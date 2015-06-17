@@ -35,13 +35,11 @@ def sam_size(bam):
 	command = "samtools view -c -F 4 {}".format(bam)
 	proc = subprocess.Popen(command.split(), stdout=subprocess.PIPE)
 	out = proc.communicate()[0]
-	print out.upper()
 	return int(out.upper())
 
-def read_tss_pysam(bam, position_dict, halfwinwidth,  conditions, fname, return_dict):
+def read_tss_pysam(bam, position_dict, halfwinwidth, return_dict):
 	profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
 	constant = 10000000/float(sam_size(bam))
-	print bam, sam_size(bam), constant
 	samfile = pysam.Samfile(bam, "rb")
 	aggreagated_cvg = collections.defaultdict(int)
 	
@@ -79,11 +77,7 @@ def read_tss_pysam(bam, position_dict, halfwinwidth,  conditions, fname, return_
 			aggreagated_cvg[i] += tmp[i]
 	for key in aggreagated_cvg:
 		profile[key] = aggreagated_cvg[key]/float(len(position_dict.keys()))
-	if fname:
-		name = "{}_{}".format(conditions[bam], fname)
-	else:
-		name=conditions[bam]
-	return_dict[name] = profile
+	return_dict[bam] = profile
 
 def read_tss_function(args):
 	return read_tss_pysam(*args)
@@ -135,13 +129,12 @@ def genebody_percentile(anno, gene_filter, mRNA_len_cut = 100):
 			g_percentiles[geneID] = (chrom, strand, mystat.percentile_list (gene_all_base))	#get 100 points from each gene's coordinates
 	return g_percentiles
 
-def genebody_coverage(bam, position_list, conditions, fname, return_dict):
+def genebody_coverage(bam, position_list, return_dict):
 	'''
 	position_list is dict returned from genebody_percentile
 	position is 1-based genome coordinate
 	'''
 	constant = 10000000/float(sam_size(bam))
-	print constant
 	samfile = pysam.Samfile(bam, "rb")
 	aggreagated_cvg = collections.defaultdict(int)
 	
@@ -183,11 +176,7 @@ def genebody_coverage(bam, position_list, conditions, fname, return_dict):
 	tmp2 = numpy.zeros( 100, dtype='f' ) 
 	for key in aggreagated_cvg:
 		tmp2[key] = aggreagated_cvg[key]/float(len(position_list.keys()))
-	if fname:
-		name = "{}_{}".format(conditions[bam], fname)
-	else:
-		name= conditions[bam]
-	return_dict[name] = tmp2
+	return_dict[bam] = tmp2
 
 def read_tss_anno(anno, gene_filter):
 	positions = {}
@@ -221,40 +210,76 @@ def read_tss_anno(anno, gene_filter):
 				c +=  1
 	return positions
 
-def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, outname):
-	pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, comb, outname):
 	halfwinwidth = int(halfwinwidth)
 	if isinstance(gene_filter, dict):
-		for key1 in gene_filter:
+		for key1 in gene_filter: #Done need fname
 			positions = read_tss_anno(anno, key1)
-			fname = gene_filter[key1]
 			manager = Manager()
 			return_dict = manager.dict()
 			pool = Pool(threads)
-			print len(positions.keys())
-			pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth), itertools.repeat(conditions),
-				itertools.repeat(fname), itertools.repeat(return_dict)))
+			pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth), itertools.repeat(return_dict)))
 			pool.close()
-			pool.join()	
-			for key in return_dict.keys():
-				pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label=key)
+			pool.join()
+			if comb:
+				pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+				combined_profiles = {}
+				rev_conds = reverse_dict(conditions)
+				for key in rev_conds:
+					c = 0
+					for bam in rev_conds[key]:
+						if key not in combined_profiles:
+							combined_profiles[key] = return_dict[bam]
+						else:
+							combined_profiles[key] += return_dict[bam]
+						c+= 1
+					combined_profiles[key] = combined_profiles[key]/float(c)
+				for key in combined_profiles.keys():
+					pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), combined_profiles[key], label="{}_{}".format(conditions[key], gene_filter[key1]))
+			else:
+				if len(list(conditions.keys())) < 11:
+					pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+				else:
+					colormap = pyplot.cm.gist_ncar
+					pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+				for key in return_dict.keys():
+					pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label="{}_{}".format(conditions[key], gene_filter[key1]))
 	else:
 		positions = read_tss_anno(anno, gene_filter)
 		fname = None
 		manager = Manager()
 		return_dict = manager.dict()
 		pool = Pool(threads)
-		pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth), itertools.repeat(conditions),
-			itertools.repeat(fname), itertools.repeat(return_dict)))
+		pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth), itertools.repeat(return_dict)))
 		pool.close()
 		pool.join()	
-		for key in return_dict.keys():
-			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label=key)
+		if comb:
+			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+			combined_profiles = {}
+			rev_conds = reverse_dict(conditions)
+			for key in rev_conds:
+				c = 0
+				for bam in rev_conds[key]:
+					if key not in combined_profiles:
+						combined_profiles[key] = return_dict[bam]
+					else:
+						combined_profiles[key] += return_dict[bam]
+					c+= 1
+				combined_profiles[key] = combined_profiles[key]/float(c)
+			for key in combined_profiles.keys():
+				pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), combined_profiles[key], label=key)
+		else:
+			if len(list(conditions.keys())) < 11:
+				pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+			else:
+				colormap = pyplot.cm.gist_ncar
+				pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+			for key in return_dict.keys():
+				pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label=conditions[key])
 	pyplot.legend(prop={'size':8})
 	pyplot.savefig(outname+".pdf")
 
-def plot_genebody_profile(conditions, anno, gene_filter, threads, outname):
-	pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname):
 	if isinstance(gene_filter, dict):
 		for key1 in gene_filter:
 			positions = genebody_percentile(anno, key1, mRNA_len_cut = 100)
@@ -262,26 +287,66 @@ def plot_genebody_profile(conditions, anno, gene_filter, threads, outname):
 			manager = Manager()
 			return_dict = manager.dict()
 			pool = Pool(threads)
-			print len(positions.keys())
 			#genebody_coverage(list(conditions.keys())[0], positions, conditions, fname, return_dict)
-			pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(conditions), 
-				itertools.repeat(fname), itertools.repeat(return_dict)))
+			pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(return_dict)))
 			pool.close()
 			pool.join()	
-			for key in return_dict.keys():
-				pyplot.plot( numpy.arange( 0, 100 ), return_dict[key], label=key)
+			if comb:
+				pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+				combined_profiles = {}
+				rev_conds = reverse_dict(conditions)
+				for key in rev_conds:
+					c = 0
+					for bam in rev_conds[key]:
+						if key not in combined_profiles:
+							combined_profiles[key] = return_dict[bam]
+						else:
+							combined_profiles[key] += return_dict[bam]
+						c+= 1
+					combined_profiles[key] = combined_profiles[key]/float(c)
+				for key in combined_profiles.keys():
+					pyplot.plot( numpy.arange( 0, 100 ), combined_profiles[key], label="{}_{}".format(conditions[key], gene_filter[key1]))
+			else:
+				if len(list(conditions.keys())) < 11:
+					pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+				else:
+					colormap = pyplot.cm.gist_ncar
+					pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+				for key in return_dict.keys():
+					pyplot.plot( numpy.arange( 0, 100 ), return_dict[key], label="{}_{}".format(conditions[key], gene_filter[key1]))
 	else:
 		positions = genebody_percentile(anno, gene_filter, mRNA_len_cut = 100)
 		fname = None
 		manager = Manager()
 		return_dict = manager.dict()
 		pool = Pool(threads)
-		pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(conditions), 
-			itertools.repeat(fname), itertools.repeat(return_dict)))
+		pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(return_dict)))
 		pool.close()
 		pool.join()	
-		for key in return_dict.keys():
-			pyplot.plot( numpy.arange( 0, 100 ), return_dict[key], label=key)
+		if comb:
+			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+			combined_profiles = {}
+			rev_conds = reverse_dict(conditions)
+			for key in rev_conds:
+				c = 0
+				for bam in rev_conds[key]:
+					if key not in combined_profiles:
+						combined_profiles[key] = return_dict[bam]
+					else:
+						combined_profiles[key] += return_dict[bam]
+					c+= 1
+				print c, key
+				combined_profiles[key] = combined_profiles[key]/float(c)
+			for key in combined_profiles.keys():
+				pyplot.plot( numpy.arange( 0, 100 ), combined_profiles[key], label=key)
+		else:
+			if len(list(conditions.keys())) < 11:
+				pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+			else:
+				colormap = pyplot.cm.gist_ncar
+				pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+			for key in return_dict.keys():
+				pyplot.plot( numpy.arange( 0, 100 ), return_dict[key], label=conditions[key])
 	pyplot.legend(prop={'size':8})
 	pyplot.savefig(outname+".pdf")
 
@@ -298,37 +363,75 @@ def ConfigSectionMap(section, Config):
 			dict1[option] = None
 	return dict1
 
-def get_insert(sam):
+def get_insert_fun(args):
+	return get_insert(*args)
+
+def get_insert(sam, ifbam, return_dict):
 	cvg = collections.defaultdict(int)
-	with open(sam) as f:
-		lines = list(islice(f, 100000))
-	for line in lines:
-		if line.startswith("@"):
-			pass
-		else:
-			word = line.rstrip().split("\t")
-			if len(word) < 9: #Presumes it removes unaligned reads
-				pass
-			else:
-				if word[2] == "chrM" or word[2] == "M": #Filter because of not relevant
+	if ifbam:
+		bamfile = HTSeq.BAM_Reader(sam)
+		print bamfile
+		for a in itertools.islice( bamfile, 1000000 ):
+			if a.aligned:
+				if a.iv.chrom == "chrM" or a.iv.chrom== "M":
 					pass
 				else:
-					if int(word[8]) < 1:
+					if a.inferred_insert_size < 1:
 						pass
-					elif int(word[8]) > 649:
-						cvg[649] += 1
+					elif a.inferred_insert_size > 649:
+						pass
 					else:
-						cvg[int(word[8])] += 1
+						cvg[a.inferred_insert_size] += 1
+	else:
+		with open(sam) as f:
+			lines = [next(f) for x in xrange(5000000)]
+			for line in lines:
+				if line.startswith("@"):
+					pass
+				else:
+					word = line.rstrip().split("\t")
+					if len(word) < 9: #Presumes it removes unaligned reads
+						pass
+					else:
+						if word[2] == "chrM" or word[2] == "M": #Filter because of not relevant
+							pass
+						else:
+							if int(word[8]) < 1:
+								pass
+							elif int(word[8]) > 649:
+								pass
+							else:
+								cvg[int(word[8])] += 1
 	profile = numpy.zeros( 650, dtype='i' ) 
 	for key in cvg:
 		profile[key] = cvg[key]
-	pyplot.plot( numpy.arange( 0, 650 ), profile, label=sam)
+	return_dict[sam] = profile
+	
+def plot_inserts(conditions, threads, ifbams, output):
+	colormap = pyplot.cm.gist_ncar
+	pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+	manager = Manager()
+	return_dict = manager.dict()
+	pool = Pool(int(threads))
+	pool.map(get_insert_fun, itertools.izip(list(conditions.keys()), itertools.repeat(ifbams), itertools.repeat(return_dict)))
+	#for i in conditions.keys():
+	#get_insert("/home/patrick/79_brian_atacseq/analysis/bam_files/0h_N04_trimmed_ddup.bam", ifbams, return_dict)
+	pool.close()
+	pool.join()	
+	for key in return_dict.keys():
+		pyplot.plot( numpy.arange( 0, 650 ), return_dict[key], label=conditions[key])
 	pyplot.axvline(x=147.,color='k',ls='dashed')
 	pyplot.axvline(x=294.,color='k',ls='dashed')
 	pyplot.axvline(x=441.,color='k',ls='dashed')
 	pyplot.legend(prop={'size':8})
-	pyplot.savefig("test.pdf")
+	pyplot.savefig(output+".pdf")
 
+def reverse_dict(idict):
+	inv_map = {}
+	for k, v in idict.iteritems():
+		inv_map[v] = inv_map.get(v, [])
+		inv_map[v].append(k)
+	return inv_map
 
 def main():
 	parser = argparse.ArgumentParser(description='Takes BED files and intersect them with regions, uses TSS regions by default\n')
@@ -339,6 +442,7 @@ def main():
 	tss_parser.add_argument('-f', '--filter', help='Gene name per line, filters TSS regions', required=False)
 	tss_parser.add_argument('-a', action='store_true', help='Use filters from Config', required=False)
 	tss_parser.add_argument('-o', '--output', help='Output name of pdf file', required=True)
+	tss_parser.add_argument('-d', action='store_true', help='Use combinations for plotting', required=False)
 	tss_parser.add_argument('-w', '--width', help='Width of region, default=1000', default=1000, required=False)
 	tss_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
 	gene_parser = subparsers.add_parser('gene', help='Genebody plotter')
@@ -346,10 +450,12 @@ def main():
 	gene_parser.add_argument('-g', '--genome', help='Options are mm10/hg19', required=False)
 	gene_parser.add_argument('-f', '--filter', help='Gene name per line, filters TSS regions', required=False)
 	gene_parser.add_argument('-a', action='store_true', help='Use filters from Config', required=False)
+	gene_parser.add_argument('-d', action='store_true', help='Use combinations for plotting', required=False)
 	gene_parser.add_argument('-o', '--output', help='Output name of pdf file', required=False)
 	gene_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
 	insert_parser = subparsers.add_parser('insert', help='Insert histogram plotter')
-	insert_parser.add_argument('-c', '--config', help='BAM as keys', required=False)
+	insert_parser.add_argument('-c', '--config', help='SAM as keys', required=False)
+	insert_parser.add_argument('-b', action='store_true', help='Input contains bams',required=False)
 	insert_parser.add_argument('-o', '--output', help='Output name of pdf file', required=False)
 	insert_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
 	if len(sys.argv)==1:
@@ -360,7 +466,6 @@ def main():
 	Config.optionxform = str
 	Config.read(args["config"])
 	conditions = ConfigSectionMap("Conditions", Config)
-	
 
 	if args["subparser_name"] == "tss":
 		if args["a"]:
@@ -370,7 +475,7 @@ def main():
 		else:
 			filters=None
 		data = pkg_resources.resource_filename('pyatactools', 'data/{}_ensembl_80.txt'.format(args["genome"]))
-		plot_tss_profile(conditions, data, int(args["width"])/2.0, filters, int(args["threads"]), args["output"])#
+		plot_tss_profile(conditions, data, int(args["width"])/2.0, filters, int(args["threads"]), args["d"], args["output"])#
 	elif args["subparser_name"] == "gene":
 		if args["a"]:
 			filters = ConfigSectionMap("Filters", Config)
@@ -379,8 +484,8 @@ def main():
 		else:
 			filters=None
 		data = pkg_resources.resource_filename('pyatactools', 'data/{}_ensembl_80.txt'.format(args["genome"]))
-		plot_genebody_profile(conditions, data, filters, int(args["threads"]), args["output"])
+		plot_genebody_profile(conditions, data, filters, int(args["threads"]), args["d"], args["output"])
 	elif args["subparser_name"] == "insert":
-		get_insert(list(conditions)[0])
+		plot_inserts(conditions, int(args["threads"]), args["b"], args["output"])
 		
 main()

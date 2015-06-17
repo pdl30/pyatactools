@@ -1,2 +1,3 @@
 recursive-include pyatactools *.py
 recursive-include pyatactools/data *.sizes
+recursive-include pyatactools/data *.txt
