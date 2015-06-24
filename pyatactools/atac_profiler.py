@@ -335,7 +335,6 @@ def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname)
 					else:
 						combined_profiles[key] += return_dict[bam]
 					c+= 1
-				print c, key
 				combined_profiles[key] = combined_profiles[key]/float(c)
 			for key in combined_profiles.keys():
 				pyplot.plot( numpy.arange( 0, 100 ), combined_profiles[key], label=key)
@@ -370,7 +369,6 @@ def get_insert(sam, ifbam, return_dict):
 	cvg = collections.defaultdict(int)
 	if ifbam:
 		bamfile = HTSeq.BAM_Reader(sam)
-		print bamfile
 		for a in itertools.islice( bamfile, 1000000 ):
 			if a.aligned:
 				if a.iv.chrom == "chrM" or a.iv.chrom== "M":
@@ -433,6 +431,99 @@ def reverse_dict(idict):
 		inv_map[v].append(k)
 	return inv_map
 
+def read_peaks(bed):
+	positions = {}
+	c = 0
+	with open(bed) as f:
+		for line in f:
+			line = line.rstrip()
+			word = line.split("\t")
+			med = int(word[2]) + int(word[1])
+			med = round(med/float(2))
+			positions[c] = (word[0], med)
+			c +=  1
+	return positions
+
+def read_peak_pysam(bam, halfwinwidth, position_dict, return_dict):
+	profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
+	constant = 10000000/float(sam_size(bam))
+	samfile = pysam.Samfile(bam, "rb")
+	aggreagated_cvg = collections.defaultdict(int)
+	
+	for chrom, summit in position_dict.values():
+		coverage = {}
+		chrom_start = summit - halfwinwidth
+		if chrom_start <0: chrom_start=0
+		chrom_end = summit + halfwinwidth
+		try:
+			samfile.pileup(chrom, 1,2)
+		except:
+			continue
+		coverage = {}
+		for i in range(1, 2*int(halfwinwidth)):
+			coverage[i] = 0.0
+		for pileupcolumn in samfile.pileup(chrom, chrom_start, chrom_end, truncate=True):
+			#ref_pos = pileupcolumn.pos
+			ref_pos = pileupcolumn.pos - chrom_start
+			cover_read = 0
+			for pileupread in pileupcolumn.pileups:
+				if pileupread.is_del: continue
+				if pileupread.alignment.is_qcfail:continue 
+				if pileupread.alignment.is_secondary:continue 
+				if pileupread.alignment.is_unmapped:continue
+				if pileupread.alignment.is_duplicate:continue
+				cover_read += constant
+			coverage[ref_pos] = cover_read
+		tmp = [coverage[k] for k in sorted(coverage)]
+	#	if strand == '-':
+	#		tmp = tmp[::-1]
+		for i in range(0,len(tmp)):
+			aggreagated_cvg[i] += tmp[i]
+	for key in aggreagated_cvg:
+		profile[key] = aggreagated_cvg[key]/float(len(position_dict.keys()))
+	return_dict[bam] = profile
+
+def read_peak_function(args):
+	return read_peak_pysam(*args)
+
+def plot_peak_profile(conditions, bed, halfwinwidth, threads, comb, outname):
+	positions = read_peaks(bed)
+	fname = None
+	manager = Manager()
+	return_dict = manager.dict()
+	#for key in conditions:
+	#	read_peak_pysam(key, positions, return_dict)
+	pool = Pool(threads)
+	pool.map(read_peak_function, itertools.izip(list(conditions.keys()), itertools.repeat(halfwinwidth), itertools.repeat(positions), itertools.repeat(return_dict)))
+	#pool.close()
+	#pool.join()	
+	if comb:
+		pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+		combined_profiles = {}
+		rev_conds = reverse_dict(conditions)
+		for key in rev_conds:
+			c = 0
+			for bam in rev_conds[key]:
+				if key not in combined_profiles:
+					combined_profiles[key] = return_dict[bam]
+				else:
+					combined_profiles[key] += return_dict[bam]
+				c+= 1
+			combined_profiles[key] = combined_profiles[key]/float(c)
+		for key in combined_profiles.keys():
+			pyplot.plot( numpy.arange( 0, halfwinwidth*2 ), combined_profiles[key], label=key)
+	else:
+		if len(list(conditions.keys())) < 11:
+			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+		else:
+			colormap = pyplot.cm.gist_ncar
+			pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+		for key in return_dict.keys():
+			pyplot.plot( numpy.arange( 0, halfwinwidth*2 ), return_dict[key], label=conditions[key])
+	pyplot.legend(prop={'size':8})
+	pyplot.savefig(outname+".pdf")
+
+
 def main():
 	parser = argparse.ArgumentParser(description='Takes BED files and intersect them with regions, uses TSS regions by default\n')
 	subparsers = parser.add_subparsers(help='Programs included',dest="subparser_name")
@@ -454,10 +545,17 @@ def main():
 	gene_parser.add_argument('-o', '--output', help='Output name of pdf file', required=False)
 	gene_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
 	insert_parser = subparsers.add_parser('insert', help='Insert histogram plotter')
-	insert_parser.add_argument('-c', '--config', help='SAM as keys', required=False)
+	insert_parser.add_argument('-c', '--config', help='BAM/SAM as keys', required=False)
 	insert_parser.add_argument('-b', action='store_true', help='Input contains bams',required=False)
 	insert_parser.add_argument('-o', '--output', help='Output name of pdf file', required=False)
 	insert_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
+	peak_parser = subparsers.add_parser('peak', help='Peak profiles plotter')
+	peak_parser.add_argument('-c', '--config', help='BAM as keys', required=False)
+	peak_parser.add_argument('-b', '--bed', help='Peak file, should be of standard width',required=False)
+	peak_parser.add_argument('-w', '--width', help='Width of region, default=1000', default=1000, required=False)
+	peak_parser.add_argument('-o', '--output', help='Output name of pdf file', required=False)
+	peak_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
+	peak_parser.add_argument('-d', action='store_true', help='Use combinations for plotting', required=False)
 	if len(sys.argv)==1:
 		parser.print_help()
 		sys.exit(1)
@@ -487,5 +585,7 @@ def main():
 		plot_genebody_profile(conditions, data, filters, int(args["threads"]), args["d"], args["output"])
 	elif args["subparser_name"] == "insert":
 		plot_inserts(conditions, int(args["threads"]), args["b"], args["output"])
-		
+	elif args["subparser_name"] == "peak":
+		plot_peak_profile(conditions, args["bed"], int(args["width"])/2.0, int(args["threads"]), args["d"], args["output"])
+
 main()
