@@ -34,6 +34,7 @@ def ConfigSectionMap(section, Config):
 
 def ddup(bam, sam=True):
 	#Convert sam to bam, rmdup bam, convert bam to sam and remove intermediates, could really do with a pipe!
+	print "yes"
 	if sam:
 		name = re.sub(".sam$", "", sam)
 		command = "samtools view -bS {0}.sam | samtools sort - {0}_sort".format(name)
@@ -46,11 +47,15 @@ def ddup(bam, sam=True):
 		command = "samtools rmdup {0}.bam - | samtools view -h - > {0}_ddup.sam".format(name)
 		subprocess.call(command, shell=True)
 
-def ddup_rename(conditions):
+def ddup_rename(conditions, sam=True):
 	ddup_sam = []
 	for cond in conditions:
-		name = re.sub(".sam$", "", cond)
-		ddup_sam.append("{}_ddup.sam".format(name))
+		if sam:
+			name = re.sub(".sam$", "", cond)
+			ddup_sam.append("{}_ddup.sam".format(name))
+		else:
+			name = re.sub(".bam$", "", cond)
+			ddup_sam.append("{}_ddup.sam".format(name))
 	return ddup_sam
 
 def transdense(sam, transdense_dir, return_dict):
@@ -215,8 +220,10 @@ def main():
 		os.makedirs(npres_dir)
 	if args["d"]:
 		if args["b"]:
-			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(False)))
-			ddup_bams = ddup_rename(conditions)
+	#		for key in conditions:
+	#			ddup(key, sam=False)
+	#		pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(False)))
+			ddup_bams = ddup_rename(conditions, False)
 		else:
 			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(True)))
 			ddup_bams = ddup_rename(conditions)
@@ -233,5 +240,4 @@ def main():
 	return_dict = manager.dict()
 	pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
 	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-
 main()
