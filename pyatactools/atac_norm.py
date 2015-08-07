@@ -13,6 +13,7 @@ import sys, re, os
 import ConfigParser
 import tempfile
 import argparse
+import pkg_resources
 
 def run_rcode(rscript):
 	rcode = tempfile.NamedTemporaryFile(delete = False)
@@ -52,9 +53,9 @@ def ConfigSectionMap(section, Config):
 			dict1[option] = None
 	return dict1
 
-def write_deseq(ifile, sample_dict, cond1, cond2, padj, f, outdir, gc_file, tmpdesign):
+def write_deseq(ifile, sample_dict, cond1, cond2, padj, f, outdir, gc_file, tmpdesign, cqn):
 	print "==> Running differental expression analysis...\n"
-	rscript =  "suppressMessages(library(cqn))\n"
+	rscript =  "suppressMessages(library(cqn)); suppressMessages(library(scales))\n"
 	rscript =  "suppressMessages(library(DESeq2))\n"
 	rscript +=  "suppressMessages(library(RColorBrewer)); suppressMessages(library(ggplot2)); suppressMessages(library(gplots))\n"
 	rscript += "pdata <- read.table('{}', header=T)\n".format(tmpdesign)
@@ -64,14 +65,18 @@ def write_deseq(ifile, sample_dict, cond1, cond2, padj, f, outdir, gc_file, tmpd
 		rscript += "counts <- counts[,6:dim(counts)[2]]\n"
 	else:
 		pass
-	rscript += "x <- read.table(gc_file, sep=\"\\t\", header=T)\n"
-	rscript += "g_length <- x[,4]-x[,3]+1; gc <- x[,1]/100; y <- cbind(g_length, gc); rownames(y) <- x[,1]\n" 
-	rscript += "library(cqn); library(scales)\n"
-	rscript += "cqn.subset <- cqn(counts, lengths = y[,1], x = x[,2], sizeFactors = colsums(counts))\n"
-	rscript += "cqnOffset <- cqn.subset$glm.offset; cqnNormFactors <- exp(cqnOffset); EDASeqNormFactors <- exp(-1 * EDASeqOffset)\n"
-	rscript += "rnaseq_dds <- DESeqDataSetFromMatrix(countData = counts, colData = data.frame(pdata), design = ~ condition)\n"
-	rscript += "rnaseq_dds$condition <- factor(rnaseq_dds$condition, levels=unique(pdata[,3]))\n"
-	rscript += "normalizationFactors(rnaseq_dds) <- EDASeqNormFactors"
+	if cqn:
+		rscript += "x <- read.table({}, sep=\"\\t\", header=T)\n".format(gc_file)
+		rscript += "g_length <- x[,4]-x[,3]+1; gc <- x[,2]/100; y <- cbind(g_length, gc); rownames(y) <- x[,1]\n" 
+		rscript += "id <- match(rownames(counts), rownames(y)); z <- y[id,]; z2 <- z[complete.cases(z),]; id <- match(rownames(z2), rownames(counts)); counts2 <- counts[id,]\n"
+		rscript += "cqn.subset <- cqn(counts2, lengths = z2[,1], x = z2[,2], sizeFactors = colsums(counts))\n"
+		rscript += "cqnOffset <- cqn.subset$glm.offset; cqnNormFactors <- exp(cqnOffset)\n"
+		rscript += "rnaseq_dds <- DESeqDataSetFromMatrix(countData = counts2, colData = data.frame(pdata), design = ~ condition)\n"
+		rscript += "rnaseq_dds$condition <- factor(rnaseq_dds$condition, levels=unique(pdata[,3]))\n"
+		rscript += "normalizationFactors(rnaseq_dds) <- cqnNormFactors"
+	else:
+		rscript += "rnaseq_dds <- DESeqDataSetFromMatrix(countData = counts, colData = data.frame(pdata), design = ~ condition)\n"
+		rscript += "rnaseq_dds$condition <- factor(rnaseq_dds$condition, levels=unique(pdata[,3]))\n"
 	rscript += "rnaseq_dds <- DESeq(rnaseq_dds)\n"	
 	rscript += "rnaseq_res <- results(rnaseq_dds, contrast=c('condition','{0}','{1}'))\n".format(cond1, cond2)
 	rscript += "rnaseq_sig <- rnaseq_res[which(rnaseq_res$padj <= {}),]\n".format(padj)
@@ -86,29 +91,62 @@ def write_deseq(ifile, sample_dict, cond1, cond2, padj, f, outdir, gc_file, tmpd
 	rscript += "dev.off()\n"
 	return rscript
 
+def get_cqn(ifile, sample_dict, f, outfile, gc_file, tmpdesign):
+	print "==> Running differental expression analysis...\n"
+	rscript =  "suppressMessages(library(cqn)); suppressMessages(library(scales))\n"
+	rscript += "pdata <- read.table('{}', header=T)\n".format(tmpdesign)
+	#Make sure they match!
+	rscript += "counts <- read.table('{}', sep='\\t', header=T, row.names=1)\n".format(ifile)
+	if f:
+		rscript += "counts <- counts[,6:dim(counts)[2]]\n"
+	else:
+		pass
+	rscript += "x <- read.table({}, sep=\"\\t\", header=T)\n".format(gc_file)
+	rscript += "g_length <- x[,4]-x[,3]+1; gc <- x[,2]/100; y <- cbind(g_length, gc); rownames(y) <- x[,1]\n" 
+	rscript += "id <- match(rownames(counts), rownames(y)); z <- y[id,]; z2 <- z[complete.cases(z),]; id <- match(rownames(z2), rownames(counts)); counts2 <- counts[id,]\n"
+	rscript += "cqn.subset <- cqn(counts2, lengths = z2[,1], x = z2[,2], sizeFactors = colsums(counts))\n"
+	rscript += "cqnOffset <- cqn.subset$glm.offset; cqnNormFactors <- exp(cqnOffset)\n"
+	return rscript
 
 def main():
 	parser = argparse.ArgumentParser(description='Differential expression for ATAC-seq experiments. Runs DESEQ2\n')
 	subparsers = parser.add_subparsers(help='Programs included',dest="subparser_name")
-	deseq_parser = subparsers.add_parser('deseq', help="Runs DESEQ")
-	deseq_parser.add_argument('-i','--input', help='Combined counts file from HTSeq or pyrna_count.py',required=True)
-	deseq_parser.add_argument('-o','--output', help='Output counts file directory, default is current directory', required=False)
+	deseq2_parser = subparsers.add_parser('deseq', help="Runs DESEQ")
+	deseq2_parser.add_argument('-c','--config', help='Config file containing parameters, please see documentation for usage!', required=False)
+	deseq2_parser.add_argument('-i','--input', help='Combined counts file from HTSeq or pyrna_count.py',required=True)
+	deseq2_parser.add_argument('-p','--padj', help='Option for DESEQ2, default=0.05', default=0.05, required=False)
+	deseq2_parser.add_argument('-n', action='store_true', help='Use CQN normalisation instead of DESEQ2', required=False)
+	deseq2_parser.add_argument('-f', action='store_true', help='Use if featureCounts used as input', required=False)
+	deseq2_parser.add_argument('-o','--output', help='Output counts file directory, default is current directory', required=False)
 
 	norm_parser = subparsers.add_parser('norm', help="Outputs normalisation factors for samples in counts matrix")
+	norm_parser.add_argument('-c','--config', help='Config file containing parameters, please see documentation for usage!', required=False)
 	norm_parser.add_argument('-i','--input', help='Combined counts file from HTSeq or pyrna_count.py',required=True)
-	norm_parser.add_argument('-o','--output', help='Output counts file directory, default is current directory', required=False)
+	norm_parser.add_argument('-f', action='store_true', help='Use if featureCounts used as input', required=False)
+	norm_parser.add_argument('-o','--output', help='Output counts file', required=False)
 	if len(sys.argv)==1:
 		parser.print_help()
 		sys.exit(1)
 	args = vars(parser.parse_args())
 	gc_values= pkg_resources.resource_filename('pyatactools', 'data/gc_values.txt')
+	Config = ConfigParser.ConfigParser()
+	Config.optionxform = str
+	Config.read(args["config"])
+	conditions = ConfigSectionMap("Conditions", Config)
+	if args["output"]:
+		output = args["output"]
+	else:
+		output = os.getcwd()
+	if args["subparser_name"] == "deseq":
+		design = create_design_for_R(conditions)
+		comparisons = ConfigSectionMap("Comparisons", Config)
+		for comp in comparisons:
+			c = comparisons[comp].split(",")
+			comps = [x.strip(' ') for x in c]
+			rscript = write_deseq(args["input"], conditions, comps[0], comps[1], args["padj"], args["f"], output, gc_values, design, args["n"]) ##Needs changing!!!
+			run_rcode(rscript)
 
-	design = create_design_for_R(conditions)
-	comparisons = ConfigSectionMap("Comparisons", Config)
-	for comp in comparisons:
-		c = comparisons[comp].split(",")
-		comps = [x.strip(' ') for x in c]
-		rscript = deseq2.write_deseq(args["input"], conditions, comps[0], comps[1], args["padj"], args["f"], output, design) ##Needs changing!!!
+	elif args["subparser_name"] == "norm":
+		design = create_design_for_R(conditions)
+		rscript = get_cqn(args["input"], conditions, args["f"], output, gc_values, design) ##Needs changing!!!
 		run_rcode(rscript)
-
-main()
