@@ -66,10 +66,10 @@ def write_deseq(ifile, sample_dict, cond1, cond2, padj, f, outdir, gc_file, tmpd
 	else:
 		pass
 	if cqn:
-		rscript += "x <- read.table({}, sep=\"\\t\", header=T)\n".format(gc_file)
+		rscript += "x <- read.table('{}', sep=\"\\t\", header=T)\n".format(gc_file)
 		rscript += "g_length <- x[,4]-x[,3]+1; gc <- x[,2]/100; y <- cbind(g_length, gc); rownames(y) <- x[,1]\n" 
 		rscript += "id <- match(rownames(counts), rownames(y)); z <- y[id,]; z2 <- z[complete.cases(z),]; id <- match(rownames(z2), rownames(counts)); counts2 <- counts[id,]\n"
-		rscript += "cqn.subset <- cqn(counts2, lengths = z2[,1], x = z2[,2], sizeFactors = colsums(counts))\n"
+		rscript += "cqn.subset <- cqn(counts2, lengths = z2[,1], x = z2[,2], sizeFactors = colSums(counts))\n"
 		rscript += "cqnOffset <- cqn.subset$glm.offset; cqnNormFactors <- exp(cqnOffset)\n"
 		rscript += "rnaseq_dds <- DESeqDataSetFromMatrix(countData = counts2, colData = data.frame(pdata), design = ~ condition)\n"
 		rscript += "rnaseq_dds$condition <- factor(rnaseq_dds$condition, levels=unique(pdata[,3]))\n"
@@ -101,11 +101,12 @@ def get_cqn(ifile, sample_dict, f, outfile, gc_file, tmpdesign):
 		rscript += "counts <- counts[,6:dim(counts)[2]]\n"
 	else:
 		pass
-	rscript += "x <- read.table({}, sep=\"\\t\", header=T)\n".format(gc_file)
+	rscript += "x <- read.table('{}', sep=\"\\t\", header=T)\n".format(gc_file)
 	rscript += "g_length <- x[,4]-x[,3]+1; gc <- x[,2]/100; y <- cbind(g_length, gc); rownames(y) <- x[,1]\n" 
 	rscript += "id <- match(rownames(counts), rownames(y)); z <- y[id,]; z2 <- z[complete.cases(z),]; id <- match(rownames(z2), rownames(counts)); counts2 <- counts[id,]\n"
-	rscript += "cqn.subset <- cqn(counts2, lengths = z2[,1], x = z2[,2], sizeFactors = colsums(counts))\n"
+	rscript += "cqn.subset <- cqn(counts2, lengths = z2[,1], x = z2[,2], sizeFactors = colSums(counts))\n"
 	rscript += "cqnOffset <- cqn.subset$glm.offset; cqnNormFactors <- exp(cqnOffset)\n"
+	rscript += "write.table(cqnNormFactors, file='{}', sep='\\t', quote=F)\n".format(outfile)
 	return rscript
 
 def main():

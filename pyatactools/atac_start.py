@@ -60,6 +60,7 @@ def ddup_rename(conditions, sam=True):
 
 def transdense(sam, transdense_dir, return_dict):
 	fh = tempfile.NamedTemporaryFile(delete = False)
+	print fh.name
 	filename = os.path.basename(sam)
 	name = re.sub(".sam$", "", filename)
 	with open(sam) as f:
@@ -95,6 +96,7 @@ def get_nfree(sam, nfree_dir, return_dict):
 	filename = os.path.basename(sam)
 	name = re.sub(".sam", "", filename)
 	fh = tempfile.NamedTemporaryFile(delete = False)
+	print fh.name
 	with open(sam) as f:
 		for line in f:
 			if line.startswith("@"):
@@ -131,6 +133,7 @@ def get_nfree(sam, nfree_dir, return_dict):
 
 def get_npres(sam, npres_dir, return_dict): 
 	fh = tempfile.NamedTemporaryFile(delete = False)
+	print fh.name
 	filename = os.path.basename(sam)
 	name = re.sub(".sam", "", filename)
 	with open(sam) as f:
@@ -208,7 +211,7 @@ def main():
 	chrom = pkg_resources.resource_filename('pyatactools', 'data/{}.chrom.sizes'.format(args["genome"]))
 	if not os.path.isfile(chrom):
 		raise Exception("Unsupported Genome!")
-	#ddup(conditions)
+
 	transdense_dir = os.path.join(args["outdir"], "transdense")
 	nfree_dir = os.path.join(args["outdir"], "nfree")
 	npres_dir = os.path.join(args["outdir"], "npres")
@@ -220,9 +223,9 @@ def main():
 		os.makedirs(npres_dir)
 	if args["d"]:
 		if args["b"]:
-	#		for key in conditions:
+#			for key in conditions:
 	#			ddup(key, sam=False)
-	#		pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(False)))
+			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(False)))
 			ddup_bams = ddup_rename(conditions, False)
 		else:
 			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(True)))
@@ -232,6 +235,9 @@ def main():
 
 	manager = Manager()
 	return_dict = manager.dict()
+	pool = Pool(int(args["threads"]))
+	#for bam in ddup_bams:
+#		transdense(bam, transdense_dir, return_dict)
 	pool.map(function1, itertools.izip(ddup_bams, itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
 	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
 	return_dict = manager.dict()
@@ -240,4 +246,3 @@ def main():
 	return_dict = manager.dict()
 	pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
 	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-main()
