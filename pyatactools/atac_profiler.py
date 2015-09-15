@@ -38,7 +38,8 @@ def sam_size(bam):
 	return int(out.upper())
 
 def read_tss_pysam(bam, position_dict, halfwinwidth, norm, return_dict):
-	profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
+	pos_profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
+	neg_profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
 	if norm:
 		constant = 1e-6/float(norm[bam])
 	else:
@@ -46,8 +47,13 @@ def read_tss_pysam(bam, position_dict, halfwinwidth, norm, return_dict):
 	samfile = pysam.Samfile(bam, "rb")
 	aggreagated_pos_cvg = collections.defaultdict(int)
 	aggreagated_neg_cvg = collections.defaultdict(int)
-	
+	pos_count =0 
+	neg_count = 0
 	for chrom, tss, strand in position_dict.values():
+		if strand == "+":
+			pos_count += 1
+		elif strand == "-":
+			neg_count += 1
 		coverage = {}
 		chrom_start = tss-halfwinwidth
 		if chrom_start <0: chrom_start=0
@@ -67,6 +73,7 @@ def read_tss_pysam(bam, position_dict, halfwinwidth, norm, return_dict):
 				ref_pos = pileupcolumn.pos - chrom_start
 			else:
 				ref_pos = chrom_end - pileupcolumn.pos 
+		#	
 			cover_read = 0
 			for pileupread in pileupcolumn.pileups:
 				if pileupread.is_del: continue
@@ -77,21 +84,20 @@ def read_tss_pysam(bam, position_dict, halfwinwidth, norm, return_dict):
 				cover_read += constant
 			if strand  == "+":
 				pos_coverage[ref_pos] = cover_read
-			else:
+			elif strand == "-":
 				neg_coverage[ref_pos] = cover_read
 		tmp1 = [pos_coverage[k] for k in sorted(pos_coverage)]
 		tmp2 = [neg_coverage[k] for k in sorted(neg_coverage)]
-	#	if strand == '-':
-	#		tmp = tmp[::-1]
+
 		for i in range(0,len(tmp1)):
-			aggreagated_pos_cvg[i] += tmp1[i]
+			aggreagated_pos_cvg[i] += tmp1[i]*10000
 		for i in range(0,len(tmp2)):
-			aggreagated_neg_cvg[i] += tmp2[i]
+			aggreagated_neg_cvg[i] += tmp2[i]*10000
 	for key in aggreagated_pos_cvg:
-		profile[key] = aggreagated_cvg[key]/float(len(position_dict.keys()))
-	for key in aggreagated_pos_cvg:
-		profile[key] = aggreagated_cvg[key]/float(len(position_dict.keys()))
-	return_dict[bam] = profile
+		pos_profile[key] = aggreagated_pos_cvg[key]/float(pos_count)
+	for key in aggreagated_neg_cvg:
+		neg_profile[key] = aggreagated_neg_cvg[key]/float(neg_count)
+	return_dict[bam] = (pos_profile, neg_profile)
 
 def read_tss_function(args):
 	return read_tss_pysam(*args)
@@ -122,7 +128,7 @@ def genebody_percentile(anno, gene_filter, mRNA_len_cut = 100):
 		else: 
 			continue
 		tx_start  = int( fields[2] )
-		tx_end    = int( fields[3] )
+		tx_end = int( fields[3] )
 		geneName      = fields[0]
 		if fields[4] == "1":
 			strand = "+"
@@ -157,19 +163,28 @@ def genebody_coverage(bam, position_list, norm, return_dict):
 	
 	gene_finished = 0
 	for chrom, strand, positions in position_list.values():
+		before = positions[0]-1011
+		if before ==0:
+			before = 0
+		after = positions[-1] + 1000
+		before_list = range(before, positions[0]-1-10, 10)
+		after_list = range(positions[-1]+10, after+10, 10)
+		new_positions = before_list + positions + after_list
+		if len(new_positions) != 300:
+			continue
 		coverage = {}
-		for i in positions:
+		for i in new_positions:
 			coverage[i] = 0.0
-		chrom_start = positions[0]-1
+		chrom_start = new_positions[0]
 		if chrom_start <0: chrom_start=0
-		chrom_end = positions[-1]
+		chrom_end = new_positions[-1]
 		try:
 			samfile.pileup(chrom, 1,2)
 		except:
 			continue
 		for pileupcolumn in samfile.pileup(chrom, chrom_start, chrom_end, truncate=True):
 			ref_pos = pileupcolumn.pos+1
-			if ref_pos not in positions:
+			if ref_pos not in new_positions:
 				continue
 			if pileupcolumn.n == 0:
 				coverage[ref_pos] = 0
@@ -182,23 +197,23 @@ def genebody_coverage(bam, position_list, norm, return_dict):
 				if pileupread.alignment.is_unmapped:continue
 				if pileupread.alignment.is_duplicate:continue
 				cover_read +=constant
-			coverage[ref_pos] = cover_read
+			coverage[ref_pos] = cover_read		
 		tmp = [coverage[k] for k in sorted(coverage)]
+
 		if strand == '-':
 			tmp = tmp[::-1]
 		for i in range(0,len(tmp)):
 			aggreagated_cvg[i] += tmp[i]
 		gene_finished += 1
 		
-	tmp2 = numpy.zeros( 100, dtype='f' ) 
+	tmp3 = numpy.zeros( 300, dtype='f' ) 
 	for key in aggreagated_cvg:
-		tmp2[key] = aggreagated_cvg[key]/float(len(position_list.keys()))
-	return_dict[bam] = tmp2
+		tmp3[key] = aggreagated_cvg[key]/float(len(position_list.keys()))
+	return_dict[bam] = tmp3
 
 def read_tss_anno(anno, gene_filter):
 	positions = {}
 	g_filter = []
-	c = 0
 	if gene_filter:
 		with open(gene_filter) as f:
 			for line in f:
@@ -220,11 +235,15 @@ def read_tss_anno(anno, gene_filter):
 				strand = "-"
 			if g_filter:
 				if word[0] in g_filter:
-					positions[word[0]] = (chrom, int(word[2]), strand)
-					c +=  1
+					if strand == "+":
+						positions[word[0]] = (chrom, int(word[2]), strand)
+					elif strand == "-":
+						positions[word[0]] = (chrom, int(word[3]), strand)
 			else:
-				positions[word[0]] = (chrom, int(word[2]), strand)
-				c +=  1
+				if strand == "+":
+					positions[word[0]] = (chrom, int(word[2]), strand)
+				elif strand == "-":
+					positions[word[0]] = (chrom, int(word[3]), strand)
 	return positions
 
 def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, comb, outname, norm):
@@ -234,24 +253,39 @@ def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, comb,
 	manager = Manager()
 	return_dict = manager.dict()
 	pool = Pool(threads)
+#	for bam in conditions:
+#		read_tss_pysam(bam, positions, halfwinwidth, norm, return_dict)
 	pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth),itertools.repeat(norm), itertools.repeat(return_dict)))
 	pool.close()
 	pool.join()	
 	if comb:
-		pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
-		combined_profiles = {}
+		pos_combined_profiles = {}
+		neg_combined_profiles = {}
 		rev_conds = reverse_dict(conditions)
 		for key in rev_conds:
 			c = 0
 			for bam in rev_conds[key]:
-				if key not in combined_profiles:
-					combined_profiles[key] = return_dict[bam]
+				if key not in pos_combined_profiles:
+					pos_combined_profiles[key] = return_dict[bam][0]
+					neg_combined_profiles[key] = return_dict[bam][1]
 				else:
-					combined_profiles[key] += return_dict[bam]
+					pos_combined_profiles[key] += return_dict[bam][0]
+					neg_combined_profiles[key] += return_dict[bam][1]
 				c+= 1
-			combined_profiles[key] = combined_profiles[key]/float(c)
-		for key in combined_profiles.keys():
-			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), combined_profiles[key], label=key)
+			pos_combined_profiles[key] = pos_combined_profiles[key]/float(c)
+			neg_combined_profiles[key] = neg_combined_profiles[key]/float(c)
+		pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+		for key in pos_combined_profiles.keys():
+			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), pos_combined_profiles[key], label=key)
+		pyplot.legend(prop={'size':8})
+		pyplot.savefig(outname+"_pos.pdf")
+		pyplot.close()
+		pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+		for key in neg_combined_profiles.keys():
+			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), neg_combined_profiles[key], label=key)
+		pyplot.legend(prop={'size':8})
+		pyplot.savefig(outname+"_neg.pdf")
+		pyplot.close()
 	else:
 		if len(list(conditions.keys())) < 11:
 			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
@@ -259,9 +293,20 @@ def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, comb,
 			colormap = pyplot.cm.gist_ncar
 			pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
 		for key in return_dict.keys():
-			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label=conditions[key])
-	pyplot.legend(prop={'size':8})
-	pyplot.savefig(outname+".pdf")
+			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key][0], label=conditions[key])
+		pyplot.legend(prop={'size':8})
+		pyplot.savefig(outname+"_pos.pdf")
+		pyplot.close()
+		if len(list(conditions.keys())) < 11:
+			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+		else:
+			colormap = pyplot.cm.gist_ncar
+			pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+		for key in return_dict.keys():
+			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key][1], label=conditions[key])
+		pyplot.legend(prop={'size':8})
+		pyplot.savefig(outname+"_neg.pdf")
+		pyplot.close()
 
 def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname, norm):
 	positions = genebody_percentile(anno, gene_filter, mRNA_len_cut = 100)
@@ -269,6 +314,8 @@ def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname,
 	manager = Manager()
 	return_dict = manager.dict()
 	pool = Pool(threads)
+	#for bam in conditions:
+	#	genebody_coverage(bam, positions, norm, return_dict)
 	pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(norm), itertools.repeat(return_dict)))
 	pool.close()
 	pool.join()	
@@ -286,7 +333,7 @@ def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname,
 				c+= 1
 			combined_profiles[key] = combined_profiles[key]/float(c)
 		for key in combined_profiles.keys():
-			pyplot.plot( numpy.arange( 0, 100 ), combined_profiles[key], label=key)
+			pyplot.plot( numpy.arange( -100, 200 ), combined_profiles[key], label=key)
 	else:
 		if len(list(conditions.keys())) < 11:
 			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
@@ -294,7 +341,8 @@ def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname,
 			colormap = pyplot.cm.gist_ncar
 			pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
 		for key in return_dict.keys():
-			pyplot.plot( numpy.arange( 0, 100 ), return_dict[key], label=conditions[key])
+			pyplot.plot( numpy.arange( -100, 200 ), return_dict[key], label=conditions[key])
+	pyplot.xticks([-100, 0, 100, 200], ['-1000', 'TSS', 'TES', "+1000"])
 	pyplot.legend(prop={'size':8})
 	pyplot.savefig(outname+".pdf")
 
@@ -427,8 +475,6 @@ def read_peak_pysam(bam, halfwinwidth, position_dict, norm, return_dict):
 				cover_read += constant
 			coverage[ref_pos] = cover_read
 		tmp = [coverage[k] for k in sorted(coverage)]
-	#	if strand == '-':
-	#		tmp = tmp[::-1]
 		for i in range(0,len(tmp)):
 			aggreagated_cvg[i] += tmp[i]
 	for key in aggreagated_cvg:
