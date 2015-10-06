@@ -25,7 +25,7 @@ import pkg_resources
 import collections
 from qcmodule import mystat
 from itertools import islice
-
+import tempfile
 #def sam_size(bam):
 #	results=  {}
 #	size = reduce(lambda x, y: x + y, [ int(l.rstrip('\n').split('\t')[2]) for l in pysam.flagstat(bam) ])
@@ -38,22 +38,16 @@ def sam_size(bam):
 	return int(out.upper())
 
 def read_tss_pysam(bam, position_dict, halfwinwidth, norm, return_dict):
-	pos_profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
-	neg_profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
+	profile = numpy.zeros( 2*halfwinwidth, dtype="f" )
 	if norm:
 		constant = 1e-6/float(norm[bam])
 	else:
 		constant = 1e-6/float(sam_size(bam))
 	samfile = pysam.Samfile(bam, "rb")
-	aggreagated_pos_cvg = collections.defaultdict(int)
-	aggreagated_neg_cvg = collections.defaultdict(int)
-	pos_count =0 
-	neg_count = 0
+	aggreagated_cvg = collections.defaultdict(int)
+	count =0 
 	for chrom, tss, strand in position_dict.values():
-		if strand == "+":
-			pos_count += 1
-		elif strand == "-":
-			neg_count += 1
+		count += 1
 		coverage = {}
 		chrom_start = tss-halfwinwidth
 		if chrom_start <0: chrom_start=0
@@ -62,18 +56,14 @@ def read_tss_pysam(bam, position_dict, halfwinwidth, norm, return_dict):
 			samfile.pileup(chrom, 1,2)
 		except:
 			continue
-		pos_coverage = {}
-		neg_coverage = {}
 		for i in range(1, 2*halfwinwidth):
-			pos_coverage[i] = 0.0
-			neg_coverage[i] = 0.0
+			coverage[i] = 0.0
 		for pileupcolumn in samfile.pileup(chrom, chrom_start, chrom_end, truncate=True):
 			#ref_pos = pileupcolumn.pos
 			if strand == "+":
 				ref_pos = pileupcolumn.pos - chrom_start
-			else:
+			elif strand == "-":
 				ref_pos = chrom_end - pileupcolumn.pos 
-		#	
 			cover_read = 0
 			for pileupread in pileupcolumn.pileups:
 				if pileupread.is_del: continue
@@ -82,22 +72,15 @@ def read_tss_pysam(bam, position_dict, halfwinwidth, norm, return_dict):
 				if pileupread.alignment.is_unmapped:continue
 				if pileupread.alignment.is_duplicate:continue
 				cover_read += constant
-			if strand  == "+":
-				pos_coverage[ref_pos] = cover_read
-			elif strand == "-":
-				neg_coverage[ref_pos] = cover_read
-		tmp1 = [pos_coverage[k] for k in sorted(pos_coverage)]
-		tmp2 = [neg_coverage[k] for k in sorted(neg_coverage)]
+			coverage[ref_pos] = cover_read
+		tmp1 = [coverage[k] for k in sorted(coverage)]
 
 		for i in range(0,len(tmp1)):
-			aggreagated_pos_cvg[i] += tmp1[i]*10000
-		for i in range(0,len(tmp2)):
-			aggreagated_neg_cvg[i] += tmp2[i]*10000
-	for key in aggreagated_pos_cvg:
-		pos_profile[key] = aggreagated_pos_cvg[key]/float(pos_count)
-	for key in aggreagated_neg_cvg:
-		neg_profile[key] = aggreagated_neg_cvg[key]/float(neg_count)
-	return_dict[bam] = (pos_profile, neg_profile)
+			aggreagated_cvg[i] += tmp1[i]*10000
+
+	for key in aggreagated_cvg:
+		profile[key] = aggreagated_cvg[key]/float(count)
+	return_dict[bam] = profile
 
 def read_tss_function(args):
 	return read_tss_pysam(*args)
@@ -253,38 +236,26 @@ def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, comb,
 	manager = Manager()
 	return_dict = manager.dict()
 	pool = Pool(threads)
-#	for bam in conditions:
-#		read_tss_pysam(bam, positions, halfwinwidth, norm, return_dict)
 	pool.map(read_tss_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(halfwinwidth),itertools.repeat(norm), itertools.repeat(return_dict)))
 	pool.close()
 	pool.join()	
 	if comb:
-		pos_combined_profiles = {}
-		neg_combined_profiles = {}
+		combined_profiles = {}
 		rev_conds = reverse_dict(conditions)
 		for key in rev_conds:
 			c = 0
 			for bam in rev_conds[key]:
-				if key not in pos_combined_profiles:
-					pos_combined_profiles[key] = return_dict[bam][0]
-					neg_combined_profiles[key] = return_dict[bam][1]
+				if key not in combined_profiles:
+					combined_profiles[key] = return_dict[bam]
 				else:
-					pos_combined_profiles[key] += return_dict[bam][0]
-					neg_combined_profiles[key] += return_dict[bam][1]
+					combined_profiles[key] += return_dict[bam]
 				c+= 1
-			pos_combined_profiles[key] = pos_combined_profiles[key]/float(c)
-			neg_combined_profiles[key] = neg_combined_profiles[key]/float(c)
+			combined_profiles[key] = combined_profiles[key]/float(c)
 		pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
-		for key in pos_combined_profiles.keys():
-			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), pos_combined_profiles[key], label=key)
+		for key in combined_profiles.keys():
+			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), combined_profiles[key], label=key)
 		pyplot.legend(prop={'size':8})
-		pyplot.savefig(outname+"_pos.pdf")
-		pyplot.close()
-		pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
-		for key in neg_combined_profiles.keys():
-			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), neg_combined_profiles[key], label=key)
-		pyplot.legend(prop={'size':8})
-		pyplot.savefig(outname+"_neg.pdf")
+		pyplot.savefig(outname+".pdf")
 		pyplot.close()
 	else:
 		if len(list(conditions.keys())) < 11:
@@ -293,19 +264,9 @@ def plot_tss_profile(conditions, anno, halfwinwidth, gene_filter, threads, comb,
 			colormap = pyplot.cm.gist_ncar
 			pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
 		for key in return_dict.keys():
-			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key][0], label=conditions[key])
+			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key], label=conditions[key])
 		pyplot.legend(prop={'size':8})
-		pyplot.savefig(outname+"_pos.pdf")
-		pyplot.close()
-		if len(list(conditions.keys())) < 11:
-			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
-		else:
-			colormap = pyplot.cm.gist_ncar
-			pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
-		for key in return_dict.keys():
-			pyplot.plot( numpy.arange( -halfwinwidth, halfwinwidth ), return_dict[key][1], label=conditions[key])
-		pyplot.legend(prop={'size':8})
-		pyplot.savefig(outname+"_neg.pdf")
+		pyplot.savefig(outname+".pdf")
 		pyplot.close()
 
 def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname, norm):
@@ -314,8 +275,6 @@ def plot_genebody_profile(conditions, anno, gene_filter, threads, comb, outname,
 	manager = Manager()
 	return_dict = manager.dict()
 	pool = Pool(threads)
-	#for bam in conditions:
-	#	genebody_coverage(bam, positions, norm, return_dict)
 	pool.map(read_gene_function, itertools.izip(list(conditions.keys()), itertools.repeat(positions), itertools.repeat(norm), itertools.repeat(return_dict)))
 	pool.close()
 	pool.join()	
@@ -362,64 +321,119 @@ def ConfigSectionMap(section, Config):
 def get_insert_fun(args):
 	return get_insert(*args)
 
-def get_insert(sam, ifbam, return_dict):
+def get_insert(sam, return_dict):
 	cvg = collections.defaultdict(int)
-	if ifbam:
-		bamfile = HTSeq.BAM_Reader(sam)
-		for a in itertools.islice( bamfile, 1000000 ):
-			if a.aligned:
-				if a.iv.chrom == "chrM" or a.iv.chrom== "M":
+	test2 = tempfile.NamedTemporaryFile(delete=False)
+	command = "samtools view -h {} -o {}".format(sam, test2.name)
+	subprocess.call(command, shell=True)
+	with open(test2.name) as f:
+		lines = [next(f) for x in xrange(5000000)]
+		for line in lines:
+			if line.startswith("@"):
+				pass
+			else:
+				word = line.rstrip().split("\t")
+				if len(word) < 9: #Presumes it removes unaligned reads
 					pass
 				else:
-					if a.inferred_insert_size < 1:
-						pass
-					elif a.inferred_insert_size > 649:
+					if word[2] == "chrM" or word[2] == "M": #Filter because of not relevant
 						pass
 					else:
-						cvg[a.inferred_insert_size] += 1
-	else:
-		with open(sam) as f:
-			lines = [next(f) for x in xrange(5000000)]
-			for line in lines:
-				if line.startswith("@"):
-					pass
-				else:
-					word = line.rstrip().split("\t")
-					if len(word) < 9: #Presumes it removes unaligned reads
-						pass
-					else:
-						if word[2] == "chrM" or word[2] == "M": #Filter because of not relevant
+						if int(word[8]) < 1:
+							pass
+						elif int(word[8]) > 649:
 							pass
 						else:
-							if int(word[8]) < 1:
-								pass
-							elif int(word[8]) > 649:
-								pass
-							else:
-								cvg[int(word[8])] += 1
+							cvg[int(word[8])] += 1
 	profile = numpy.zeros( 650, dtype='i' ) 
 	for key in cvg:
 		profile[key] = cvg[key]
 	return_dict[sam] = profile
-	
-def plot_inserts(conditions, threads, ifbams, output):
-	colormap = pyplot.cm.gist_ncar
-	pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
-	manager = Manager()
-	return_dict = manager.dict()
-	pool = Pool(int(threads))
-	pool.map(get_insert_fun, itertools.izip(list(conditions.keys()), itertools.repeat(ifbams), itertools.repeat(return_dict)))
-	#for i in conditions.keys():
-	#get_insert("/home/patrick/79_brian_atacseq/analysis/bam_files/0h_N04_trimmed_ddup.bam", ifbams, return_dict)
-	pool.close()
-	pool.join()	
-	for key in return_dict.keys():
-		pyplot.plot( numpy.arange( 0, 650 ), return_dict[key], label=conditions[key])
-	pyplot.axvline(x=147.,color='k',ls='dashed')
-	pyplot.axvline(x=294.,color='k',ls='dashed')
-	pyplot.axvline(x=441.,color='k',ls='dashed')
-	pyplot.legend(prop={'size':8})
-	pyplot.savefig(output+".pdf")
+
+def plot_insert_bed2(sam, bedfile, return_dict):
+	cvg = collections.defaultdict(int)
+	test = tempfile.NamedTemporaryFile(delete = False)
+	test2 = tempfile.NamedTemporaryFile(delete=False)
+	command = "bedtools intersect -abam {} -b {} > {}".format(sam, bedfile, test.name)
+	subprocess.call(command, shell=True)
+	command = "samtools view -h {} -o {}".format(test.name, test2.name)
+	subprocess.call(command, shell=True)
+	with open(test2.name) as f:
+		for line in f:
+			if line.startswith("@"):
+				pass
+			else:
+				word = line.rstrip().split("\t")
+				if len(word) < 9: #Presumes it removes unaligned reads
+					pass
+				else:
+					if word[2] == "chrM" or word[2] == "M": #Filter because of not relevant
+						pass
+					else:
+						if abs(int(word[8])) < 1:
+							pass
+						elif abs(int(word[8])) > 100: 
+							pass
+						else:
+							cvg[abs(int(word[8]))] += 1
+	profile = numpy.zeros( 101, dtype='i' )
+	for i in range(0, 101):
+		if cvg[i]:
+			profile[i] = cvg[i]
+		else:
+			profile[i] = 0
+	return_dict[sam] = profile
+
+def plot_insert_bed_function(args):
+	return plot_insert_bed2(*args)
+
+def plot_inserts(conditions, threads, output, bedfile, comb):
+	if bedfile:
+		positions = set()
+		manager = Manager()
+		return_dict = manager.dict()		
+		pool = Pool(int(threads))
+		pool.map(plot_insert_bed_function, itertools.izip(list(conditions.keys()), itertools.repeat(bedfile), itertools.repeat(return_dict)))
+		pool.close()
+		pool.join()	
+		if comb:
+			pyplot.rc('axes', color_cycle=['b','r', 'c', 'm', 'y', 'k', 'gray', "green", "darkred", "skyblue"])
+			combined_profiles = {}
+			rev_conds = reverse_dict(conditions)
+			for key in rev_conds:
+				c = 0
+				for bam in rev_conds[key]:
+					if key not in combined_profiles:
+						combined_profiles[key] = return_dict[bam]
+					else:
+						combined_profiles[key] += return_dict[bam]
+					c+= 1
+				combined_profiles[key] = combined_profiles[key]/float(c)
+			for key in combined_profiles.keys():
+				pyplot.plot( numpy.arange( 0, 101), combined_profiles[key], label=key)
+			pyplot.legend(prop={'size':8})
+			pyplot.savefig(output+".pdf")
+		else:
+			for key in return_dict.keys():
+				pyplot.plot( numpy.arange( 0, 101 ), return_dict[key], label=conditions[key])
+			pyplot.legend(prop={'size':8})
+			pyplot.savefig(output+".pdf")
+	else:
+		colormap = pyplot.cm.gist_ncar
+		pyplot.gca().set_color_cycle([colormap(i) for i in numpy.linspace(0, 0.9, len(list(conditions.keys())))])
+		manager = Manager()
+		return_dict = manager.dict()
+		pool = Pool(int(threads))
+		pool.map(get_insert_fun, itertools.izip(list(conditions.keys()), itertools.repeat(return_dict)))
+		pool.close()
+		pool.join()	
+		for key in return_dict.keys():
+			pyplot.plot( numpy.arange( 0, 650 ), return_dict[key], label=conditions[key])
+		pyplot.axvline(x=147.,color='k',ls='dashed')
+		pyplot.axvline(x=294.,color='k',ls='dashed')
+		pyplot.axvline(x=441.,color='k',ls='dashed')
+		pyplot.legend(prop={'size':8})
+		pyplot.savefig(output+".pdf")
 
 def reverse_dict(idict):
 	inv_map = {}
@@ -489,8 +503,6 @@ def plot_peak_profile(conditions, bed, halfwinwidth, threads, comb, outname, nor
 	fname = None
 	manager = Manager()
 	return_dict = manager.dict()
-	#for key in conditions:
-	#	read_peak_pysam(key, positions, return_dict)
 	pool = Pool(threads)
 	pool.map(read_peak_function, itertools.izip(list(conditions.keys()), itertools.repeat(halfwinwidth), itertools.repeat(positions), itertools.repeat(norm), itertools.repeat(return_dict)))
 	pool.close()
@@ -540,10 +552,11 @@ def main():
 	gene_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
 	gene_parser.add_argument('-n', action='store_true', help='Use [Norm] as constant from config', required=False)
 	insert_parser = subparsers.add_parser('insert', help='Insert histogram plotter')
-	insert_parser.add_argument('-c', '--config', help='BAM/SAM as keys', required=False)
-	insert_parser.add_argument('-b', action='store_true', help='Input contains bams',required=False)
+	insert_parser.add_argument('-c', '--config', help='BAM as keys, must be bams!', required=False)
 	insert_parser.add_argument('-o', '--output', help='Output name of pdf file', required=False)
+	insert_parser.add_argument('-r', '--bedfile', help='Plot insert size of bed file regions', required=False)
 	insert_parser.add_argument('-t', '--threads', help='Threads, default=8', default=8, required=False)
+	insert_parser.add_argument('-d', action='store_true', help='Use combinations for plotting. Only works if supplying bed file', required=False)
 	peak_parser = subparsers.add_parser('peak', help='Peak profiles plotter')
 	peak_parser.add_argument('-c', '--config', help='BAM as keys', required=False)
 	peak_parser.add_argument('-b', '--bed', help='Peak file, should be of standard width',required=False)
@@ -584,7 +597,7 @@ def main():
 		data = pkg_resources.resource_filename('pyatactools', 'data/mm10_ensembl_80.txt')
 		plot_genebody_profile(conditions, data, filters, int(args["threads"]), args["d"], args["output"], norm)
 	elif args["subparser_name"] == "insert":
-		plot_inserts(conditions, int(args["threads"]), args["b"], args["output"])
+		plot_inserts(conditions, int(args["threads"]), args["output"], args["bedfile"], args["d"])
 	elif args["subparser_name"] == "peak":
 		if args["n"]:
 			norm = ConfigSectionMap("Norm", Config)

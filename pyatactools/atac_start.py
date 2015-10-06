@@ -131,6 +131,63 @@ def get_nfree(sam, nfree_dir, return_dict):
 	subprocess.call(command, shell=True)
 	os.remove(fh.name)
 
+def get_nfree_2_types(sam, nfree_small, nfree_large, return_dict):
+	filename = os.path.basename(sam)
+	name = re.sub(".sam", "", filename)
+	fh_small = tempfile.NamedTemporaryFile(delete = False)
+	fh_large = tempfile.NamedTemporaryFile(delete = False)
+	with open(sam) as f:
+		for line in f:
+			if line.startswith("@"):
+				pass
+			else:
+				word = line.rstrip().split("\t")
+				if len(word) < 9: #Presumes it removes unaligned reads
+					pass
+				else:
+					if word[2] == "chrM" or word[2] == "M": #Filter because of not relevant
+						pass
+					else:
+						if int(word[8]) == 0:
+							pass
+						else:
+							if int(word[8]) < 60 and int(word[8]) > -60:
+								if int(word[8]) > 0:		
+									start = int(word[3]) - 11 
+									end = int(word[3]) + 17
+									if start > 0:
+										fh_small.write("{}\t{}\t{}\tT\t0\t+\n".format(word[2], start, end)),
+								elif int(word[8]) < 0:
+									start = int(word[3]) - int(word[8])
+									start -= 19
+									end = int(word[3]) - int(word[8])
+									end += 9
+									if start > 0:
+										fh_small.write("{}\t{}\t{}\tT\t0\t+\n".format(word[2], start, end)),
+							elif int(word[8]) < 100 and int(word[8]) > -100:
+								if int(word[8]) > 0:		
+									start = int(word[3]) - 11 
+									end = int(word[3]) + 17
+									if start > 0:
+										fh_large.write("{}\t{}\t{}\tT\t0\t+\n".format(word[2], start, end)),
+								elif int(word[8]) < 0:
+									start = int(word[3]) - int(word[8])
+									start -= 19
+									end = int(word[3]) - int(word[8])
+									end += 9
+									if start > 0:
+										fh_large.write("{}\t{}\t{}\tT\t0\t+\n".format(word[2], start, end)),
+	fh_small.close()
+	fh_large.close()
+	command1 = "sort -k1,1 -k2,2n {} | uniq > {}/{}_mynfree.bed".format(fh_small.name, nfree_small, name)
+	command2 = "sort -k1,1 -k2,2n {} | uniq > {}/{}_mynfree.bed".format(fh_large.name, nfree_large, name)
+	return_dict["{}/{}_mynfree.bed".format(nfree_small, name)] = 1
+	return_dict["{}/{}_mynfree.bed".format(nfree_large, name)] = 1
+	subprocess.call(command1, shell=True)
+	subprocess.call(command2, shell=True)
+	os.remove(fh_small.name)
+	os.remove(fh_large.name)
+
 def get_npres(sam, npres_dir, return_dict): 
 	fh = tempfile.NamedTemporaryFile(delete = False)
 	print fh.name
@@ -190,6 +247,9 @@ def function4(args):
 def function0(args):
 	return ddup(*args)	
 
+def function5(args):
+	return get_nfree_2_types(*args)
+
 def main():
 	parser = argparse.ArgumentParser(description='Takes bam files and preprocess\'s for analysis\n')
 	parser.add_argument('-c', '--config', help='Conditions containing Sam/Bam files, values are naming', required=True)
@@ -198,6 +258,7 @@ def main():
 	parser.add_argument('-t', '--threads', help='threads, default=1', default=1, required=False)
 	parser.add_argument('-b', action='store_true', help='Use if Config contains bam files', required=False) 
 	parser.add_argument('-d', action='store_true', help='De-duplicate sam/bam files', required=False) 
+	parser.add_argument('-n', action='store_true', help='Run nfree <60 and >60', required=False) 
 	if len(sys.argv)==1:
 		parser.print_help()
 		sys.exit(1)
@@ -233,16 +294,33 @@ def main():
 	else:
 		ddup_bams = list(conditions.keys())
 
-	manager = Manager()
-	return_dict = manager.dict()
-	pool = Pool(int(args["threads"]))
-	#for bam in ddup_bams:
-#		transdense(bam, transdense_dir, return_dict)
-	pool.map(function1, itertools.izip(ddup_bams, itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
-	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-	return_dict = manager.dict()
-	pool.map(function2, itertools.izip(ddup_bams, itertools.repeat(nfree_dir), itertools.repeat(return_dict)))
-	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-	return_dict = manager.dict()
-	pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
-	pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+	if args["n"]:
+		manager = Manager()
+		return_dict = manager.dict()
+		pool = Pool(int(args["threads"]))
+		return_dict = manager.dict()
+		nfree_dir1 = os.path.join(args["outdir"], "nfree_small")
+		nfree_dir2 = os.path.join(args["outdir"], "nfree_large")
+		if not os.path.isdir(nfree_dir1):
+			os.makedirs(nfree_dir1)
+			os.makedirs(nfree_dir2)
+
+		#for bam in ddup_bams:
+	#		get_nfree_2_types(bam, nfree_dir1, nfree_dir2, return_dict)
+		pool.map(function5, itertools.izip(ddup_bams, itertools.repeat(nfree_dir1),itertools.repeat(nfree_dir2), itertools.repeat(return_dict)))
+		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+	else:
+		manager = Manager()
+		return_dict = manager.dict()
+		pool = Pool(int(args["threads"]))
+		#for bam in ddup_bams:
+	#		transdense(bam, transdense_dir, return_dict)
+		pool.map(function1, itertools.izip(ddup_bams, itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
+		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+		return_dict = manager.dict()
+		pool.map(function2, itertools.izip(ddup_bams, itertools.repeat(nfree_dir), itertools.repeat(return_dict)))
+		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+		return_dict = manager.dict()
+		pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
+		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
+main()
