@@ -32,35 +32,8 @@ def ConfigSectionMap(section, Config):
 			dict1[option] = None
 	return dict1
 
-def ddup(bam, sam=True):
-	#Convert sam to bam, rmdup bam, convert bam to sam and remove intermediates, could really do with a pipe!
-	print "yes"
-	if sam:
-		name = re.sub(".sam$", "", sam)
-		command = "samtools view -bS {0}.sam | samtools sort - {0}_sort".format(name)
-		subprocess.call(command, shell=True)
-		command = "samtools rmdup {0}_sort.bam - | samtools view -h - > {0}_ddup.sam".format(name)
-		subprocess.call(command, shell=True)
-		os.remove("{0}_sort.bam".format(name))
-	else:
-		name = re.sub(".bam$", "", bam)
-		command = "samtools rmdup {0}.bam - | samtools view -h - > {0}_ddup.sam".format(name)
-		subprocess.call(command, shell=True)
-
-def ddup_rename(conditions, sam=True):
-	ddup_sam = []
-	for cond in conditions:
-		if sam:
-			name = re.sub(".sam$", "", cond)
-			ddup_sam.append("{}_ddup.sam".format(name))
-		else:
-			name = re.sub(".bam$", "", cond)
-			ddup_sam.append("{}_ddup.sam".format(name))
-	return ddup_sam
-
 def transdense(sam, transdense_dir, return_dict):
 	fh = tempfile.NamedTemporaryFile(delete = False)
-	print fh.name
 	filename = os.path.basename(sam)
 	name = re.sub(".sam$", "", filename)
 	with open(sam) as f:
@@ -96,7 +69,6 @@ def get_nfree(sam, nfree_dir, return_dict):
 	filename = os.path.basename(sam)
 	name = re.sub(".sam", "", filename)
 	fh = tempfile.NamedTemporaryFile(delete = False)
-	print fh.name
 	with open(sam) as f:
 		for line in f:
 			if line.startswith("@"):
@@ -134,8 +106,9 @@ def get_nfree(sam, nfree_dir, return_dict):
 def get_nfree_2_types(sam, nfree_small, nfree_large, return_dict):
 	filename = os.path.basename(sam)
 	name = re.sub(".sam", "", filename)
-	fh_small = tempfile.NamedTemporaryFile(delete = False)
-	fh_large = tempfile.NamedTemporaryFile(delete = False)
+	fh_small = open("{}/{}_tmp.bed".format(nfree_small, name), "w")
+	fh_large = open("{}/{}_tmp.bed".format(nfree_large, name), "w")
+	print sam, name
 	with open(sam) as f:
 		for line in f:
 			if line.startswith("@"):
@@ -179,8 +152,8 @@ def get_nfree_2_types(sam, nfree_small, nfree_large, return_dict):
 										fh_large.write("{}\t{}\t{}\tT\t0\t+\n".format(word[2], start, end)),
 	fh_small.close()
 	fh_large.close()
-	command1 = "sort -k1,1 -k2,2n {} | uniq > {}/{}_mynfree.bed".format(fh_small.name, nfree_small, name)
-	command2 = "sort -k1,1 -k2,2n {} | uniq > {}/{}_mynfree.bed".format(fh_large.name, nfree_large, name)
+	command1 = "sort -k1,1 -k2,2n {}/{}_tmp.bed | uniq > {}/{}_mynfree.bed".format(nfree_small, name, nfree_small, name)
+	command2 = "sort -k1,1 -k2,2n {}/{}_tmp.bed | uniq > {}/{}_mynfree.bed".format(nfree_large, name, nfree_large, name)
 	return_dict["{}/{}_mynfree.bed".format(nfree_small, name)] = 1
 	return_dict["{}/{}_mynfree.bed".format(nfree_large, name)] = 1
 	subprocess.call(command1, shell=True)
@@ -190,7 +163,6 @@ def get_nfree_2_types(sam, nfree_small, nfree_large, return_dict):
 
 def get_npres(sam, npres_dir, return_dict): 
 	fh = tempfile.NamedTemporaryFile(delete = False)
-	print fh.name
 	filename = os.path.basename(sam)
 	name = re.sub(".sam", "", filename)
 	with open(sam) as f:
@@ -223,10 +195,7 @@ def get_npres(sam, npres_dir, return_dict):
 
 def convert_bed_bw(bed, chrom):
 	name = re.sub(".bed", "", bed)
-	#inbed = pybedtools.BedTool(bed)
-	#outcov = inbed.genome_coverage(bg=True, genome=chrom)
 	command = "bedtools genomecov -i {} -bg -g {} > {}.bedGraph".format(bed, chrom, name)
-	#outcov.saveas(name+".bedGraph")
 	subprocess.call(command, shell=True)
 	command = ["bedGraphToBigWig", name+".bedGraph", chrom, name+".bw"]
 	subprocess.call(command)
@@ -244,21 +213,17 @@ def function3(args):
 def function4(args):
 	return convert_bed_bw(*args)
 
-def function0(args):
-	return ddup(*args)	
-
 def function5(args):
 	return get_nfree_2_types(*args)
 
 def main():
-	parser = argparse.ArgumentParser(description='Takes bam files and preprocess\'s for analysis\n')
+	parser = argparse.ArgumentParser(description='Takes deduplicated bam files and preprocess\'s for analysis\n')
 	parser.add_argument('-c', '--config', help='Conditions containing Sam/Bam files, values are naming', required=True)
 	parser.add_argument('-g', '--genome', help='Genome the samples are aligned to, options include	 mm10/mm9/hg19', required=True)
 	parser.add_argument('-o', '--outdir', help='Output directory, will create transdense, nfree and npres directories', required=True)
 	parser.add_argument('-t', '--threads', help='threads, default=1', default=1, required=False)
 	parser.add_argument('-b', action='store_true', help='Use if Config contains bam files', required=False) 
-	parser.add_argument('-d', action='store_true', help='De-duplicate sam/bam files', required=False) 
-	parser.add_argument('-n', action='store_true', help='Run nfree <60 and >60', required=False) 
+	parser.add_argument('-n', action='store_true', help='Runs just nfree <60 and >60', required=False) 
 	if len(sys.argv)==1:
 		parser.print_help()
 		sys.exit(1)
@@ -282,18 +247,8 @@ def main():
 		os.makedirs(transdense_dir)
 		os.makedirs(nfree_dir)
 		os.makedirs(npres_dir)
-	if args["d"]:
-		if args["b"]:
-#			for key in conditions:
-	#			ddup(key, sam=False)
-			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(False)))
-			ddup_bams = ddup_rename(conditions, False)
-		else:
-			pool.map(function0, itertools.izip(list(conditions.keys()), itertools.repeat(True)))
-			ddup_bams = ddup_rename(conditions)
-	else:
-		ddup_bams = list(conditions.keys())
-
+	
+	ddup_bams = list(conditions.keys())
 	if args["n"]:
 		manager = Manager()
 		return_dict = manager.dict()
@@ -304,17 +259,12 @@ def main():
 		if not os.path.isdir(nfree_dir1):
 			os.makedirs(nfree_dir1)
 			os.makedirs(nfree_dir2)
-
-		#for bam in ddup_bams:
-	#		get_nfree_2_types(bam, nfree_dir1, nfree_dir2, return_dict)
 		pool.map(function5, itertools.izip(ddup_bams, itertools.repeat(nfree_dir1),itertools.repeat(nfree_dir2), itertools.repeat(return_dict)))
 		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
 	else:
 		manager = Manager()
 		return_dict = manager.dict()
 		pool = Pool(int(args["threads"]))
-		#for bam in ddup_bams:
-	#		transdense(bam, transdense_dir, return_dict)
 		pool.map(function1, itertools.izip(ddup_bams, itertools.repeat(transdense_dir), itertools.repeat(return_dict)))
 		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
 		return_dict = manager.dict()
@@ -323,4 +273,3 @@ def main():
 		return_dict = manager.dict()
 		pool.map(function3, itertools.izip(ddup_bams, itertools.repeat(npres_dir), itertools.repeat(return_dict)))
 		pool.map(function4, itertools.izip(list(return_dict.keys()), itertools.repeat(chrom)))
-main()

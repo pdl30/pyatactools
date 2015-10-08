@@ -26,6 +26,7 @@ import collections
 from qcmodule import mystat
 from itertools import islice
 import tempfile
+
 #def sam_size(bam):
 #	results=  {}
 #	size = reduce(lambda x, y: x + y, [ int(l.rstrip('\n').split('\t')[2]) for l in pysam.flagstat(bam) ])

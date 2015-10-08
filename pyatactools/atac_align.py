@@ -11,7 +11,6 @@
 import subprocess
 import sys, re, os
 import ConfigParser
-from pychiptools.utilities import fastqc
 import argparse
 
 def align(fq1, threads, fasta, outdir, outname, fq2=None):
@@ -31,6 +30,69 @@ def align(fq1, threads, fasta, outdir, outname, fq2=None):
 		subprocess.call(command, shell=True)
 		command = "bwa samse -a 2000 -n 1 {0} {3}/{1}_1.bwa {2} > {3}/{4}.sam".format(fasta, name, fq1, outdir, outname)
 		subprocess.call(command, shell=True)
+
+def run_fastqc(fq1, outdir):
+	command = "fastqc -q {} -o {}".format(fq1, outdir) 
+	subprocess.call(command.split())
+
+def find_adapters(outdir, fq):
+	adapters = []
+	name = re.sub(".fastq", "", fq)
+	name = os.path.basename(name)
+	command = "unzip -o -q {}/{}_fastqc.zip -d {}".format(outdir, name, outdir)
+	subprocess.call(command.split())
+	report = "{}/{}_fastqc/fastqc_data.txt".format(outdir, name)
+	flist = open(report).readlines()
+	parsing = False
+	for line in flist:
+		if line.startswith(">>Overrepresented sequences\tfail"):
+			parsing = True
+		elif line.startswith(">>END_MODULE"):
+			parsing = False
+		if parsing:
+			if line.startswith(">>"):
+				continue
+			if line.startswith("#"):
+				continue
+			else:
+				line = line.rstrip()
+				word = line.split("\t")
+				if word[3] != "No Hit":
+					adapters.append(word[0])
+	return adapters
+
+def single_cut_adapters(adapters, fq1, outdir):
+	trim = open('{}/trim_report.txt'.format(outdir), 'w')
+	adapt1 = ""
+	for i in adapters:
+		adapters = "-a {} ".format(i)
+		adapt1 = adapters+adapt1
+	command1 = "cutadapt -q 20 {0} --minimum-length=10 -o {1}/trimmed.fastq {2}".format(adapt1, outdir, fq1)
+	p = subprocess.Popen(command1.split(), stdout=trim)
+	p.communicate()
+
+def paired_cut_adapters(adapters, fq1, outdir, rev_adapters, fq2):
+	devnull = open('/dev/null', 'w')
+	trim = open('{}/trim_report.txt'.format(outdir), 'w')
+	adapt1 = ""
+	for i in adapters:
+		adapters = "-a {} ".format(i)
+		adapt1 = adapters+adapt1
+
+	adapt2 = ""
+	for i in rev_adapters:
+		adapters = "-a {} ".format(i)
+		adapt2 = adapters+adapt2
+
+	command1 = "cutadapt -q 20 {0} --minimum-length=10 --paired-output {1}/tmp.2.fastq -o {1}/tmp.1.fastq {2} {3}".format(adapt1, outdir, fq1, fq2)
+	p = subprocess.Popen(command1.split(), stdout=trim)
+	p.communicate()
+	command2 = "cutadapt -q 20 {0} --minimum-length=10 --paired-output {1}/trimmed_1.fastq -o {1}/trimmed_2.fastq {1}/tmp.2.fastq {1}/tmp.1.fastq".format(adapt2, outdir)
+	p = subprocess.Popen(command2.split(), stdout=trim)
+	p.communicate()
+	cleanup = ["rm", "{0}/tmp.2.fastq".format(outdir), "{0}/tmp.1.fastq".format(outdir)]
+	subprocess.call(cleanup, stdout=devnull)
+
 
 def main():
 	parser = argparse.ArgumentParser(description='ChIP-seq fastqc, trimmer and bowtie wrapper\n ')
@@ -53,13 +115,13 @@ def main():
 		fq1 = args["pair"][0]
 		fq2 = args["pair"][1]
 		print "==> Running FastQC...\n"
-		fastqc.run_fastqc(fq1, args["outdir"])
-		fastqc.run_fastqc(fq2, args["outdir"])
-		fwd_adapt = fastqc.find_adapters(args["outdir"], fq1)
-		rev_adapt = fastqc.find_adapters(args["outdir"], fq2)
+		run_fastqc(fq1, args["outdir"])
+		run_fastqc(fq2, args["outdir"])
+		fwd_adapt = find_adapters(args["outdir"], fq1)
+		rev_adapt = find_adapters(args["outdir"], fq2)
 		if fwd_adapt or rev_adapt:
 			print "==> Removing adapters...\n"
-			fastqc.paired_cut_adapters(fwd_adapt, fq1, args["outdir"], rev_adapt, fq2)
+			paired_cut_adapters(fwd_adapt, fq1, args["outdir"], rev_adapt, fq2)
 			fq1 = args["outdir"]+"/trimmed_1.fastq" 
 			fq2 = args["outdir"]+"/trimmed_2.fastq"
 		print "==> Aligning fastq's...\n"
@@ -67,11 +129,11 @@ def main():
 	elif args["fastq"]:
 		fq1 = args["fastq"]
 		print "==> Running FastQC...\n"
-		fastqc.run_fastqc(fq1, args["outdir"])
-		adapt = fastqc.find_adapters(args["outdir"], fq1)
+		run_fastqc(fq1, args["outdir"])
+		adapt = find_adapters(args["outdir"], fq1)
 		if adapt:
 			print "==> Removing adapters...\n"
-			fastqc.single_cut_adapters(adapt, fq1, args["outdir"])
+			single_cut_adapters(adapt, fq1, args["outdir"])
 			fq1 = args["outdir"]+"/trimmed.fastq" 
 		print "==> Aligning fastq's...\n"
 		align(fq1, int(args["threads"]), args["ref"], args["outdir"], args["samname"], fq2=None)
